@@ -1,0 +1,2674 @@
+"""
+STUDY_STORM — AI-Powered Student Learning Suite
+Gen Z aesthetic: Neo-Brutalist + Vaporwave
+Uses Ollama for local AI inference
+FIXED: Flashcard PREV/NEXT navigation (removed disabled= kwarg, use conditional rendering)
+"""
+
+import streamlit as st
+import requests
+import time
+import random
+import json
+import base64
+from datetime import datetime, timedelta
+from io import BytesIO
+
+st.set_page_config(
+    page_title="STUDY_STORM | AI LEARNING SUITE",
+    page_icon="⚡",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# ── OLLAMA CONFIG ─────────────────────────────────────────────
+OLLAMA_URL    = "http://localhost:11434/api/generate"
+DEFAULT_MODEL = "llama3"
+
+def ollama_generate(prompt: str, model: str = DEFAULT_MODEL, system: str = "") -> str:
+    payload = {"model": model, "prompt": prompt, "stream": False}
+    if system:
+        payload["system"] = system
+    try:
+        resp = requests.post(OLLAMA_URL, json=payload, timeout=120)
+        resp.raise_for_status()
+        return resp.json().get("response", "⚠️ No response from Ollama.")
+    except requests.exceptions.ConnectionError:
+        return ("⚠️ **OLLAMA NOT CONNECTED** — Make sure Ollama is running: `ollama serve` "
+                "and the model is pulled: `ollama pull llama3`")
+    except Exception as e:
+        return f"⚠️ Error: {str(e)}"
+
+def get_ollama_models() -> list:
+    try:
+        resp = requests.get("http://localhost:11434/api/tags", timeout=5)
+        models = [m["name"] for m in resp.json().get("models", [])]
+        return models if models else [DEFAULT_MODEL]
+    except Exception:
+        return [DEFAULT_MODEL]
+
+# ── COLOR PALETTE ──────────────────────────────────────────────
+LIME   = "#CAFF00"
+PINK   = "#FF1F6D"
+CYAN   = "#00E5FF"
+BG     = "#080808"
+CARD   = "#101010"
+SURF   = "#181818"
+SURF2  = "#222220"
+WHITE  = "#FFFFFF"
+TEXT   = "#FFA200"
+MUTED  = "#B0BA96"
+DARK   = "#3A3A38"
+
+st.markdown(f"""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;700;900&family=Inter:wght@400;700&display=swap');
+
+*, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
+
+html, body, [data-testid="stAppViewContainer"],
+[data-testid="stApp"], .main {{
+    background-color: {BG} !important;
+    color: {TEXT} !important;
+    font-family: 'Inter', sans-serif !important;
+}}
+
+[data-testid="stSidebar"] {{
+    background-color: {CARD} !important;
+    border-right: 2px solid {WHITE} !important;
+    box-shadow: 4px 0 0 0 {LIME} !important;
+}}
+
+[data-testid="stSidebarContent"] {{ padding: 0 !important; }}
+
+#MainMenu, footer, header {{ visibility: hidden; }}
+[data-testid="stToolbar"] {{ display: none; }}
+
+h1, h2, h3, h4, h5, h6 {{
+    font-family: 'Space Grotesk', sans-serif !important;
+    letter-spacing: -0.04em;
+    font-weight: 900 !important;
+    text-transform: uppercase;
+    color: {WHITE} !important;
+}}
+
+.stButton > button {{
+    background-color: {LIME} !important;
+    color: #000000 !important;
+    font-family: 'Space Grotesk', sans-serif !important;
+    font-weight: 900 !important;
+    font-size: 13px !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.08em !important;
+    border: 2px solid {WHITE} !important;
+    border-radius: 0 !important;
+    box-shadow: 4px 4px 0 0 {WHITE} !important;
+    transition: all 0.1s ease !important;
+    padding: 0.5rem 1rem !important;
+}}
+.stButton > button:hover {{
+    box-shadow: 2px 2px 0 0 {WHITE} !important;
+    transform: translate(2px, 2px) !important;
+    background-color: #B8EB00 !important;
+}}
+.stButton > button:active {{
+    box-shadow: none !important;
+    transform: translate(4px, 4px) !important;
+}}
+
+[data-testid="stSidebar"] .back-btn-wrap button {{
+    background-color: {SURF2} !important;
+    color: {MUTED} !important;
+    border: 2px dashed {DARK} !important;
+    box-shadow: none !important;
+    font-size: 11px !important;
+    letter-spacing: 0.05em !important;
+}}
+[data-testid="stSidebar"] .back-btn-wrap button:hover {{
+    background-color: {SURF} !important;
+    border-color: {WHITE} !important;
+    color: {WHITE} !important;
+    box-shadow: none !important;
+    transform: none !important;
+}}
+
+.stTextInput > div > div > input,
+.stTextArea > div > div > textarea,
+.stSelectbox > div > div > div {{
+    background-color: #000000 !important;
+    color: {TEXT} !important;
+    border: 2px solid {WHITE} !important;
+    border-radius: 0 !important;
+    font-family: 'Inter', sans-serif !important;
+}}
+.stTextInput > div > div > input:focus,
+.stTextArea > div > div > textarea:focus {{
+    border-color: {LIME} !important;
+    box-shadow: 0 0 0 3px rgba(202,255,0,0.25) !important;
+}}
+
+[data-testid="stFileUploader"] {{
+    border: 2px dashed {LIME} !important;
+    border-radius: 0 !important;
+    background-color: {CARD} !important;
+    padding: 1rem !important;
+}}
+
+.stTabs [data-baseweb="tab-list"] {{
+    background: #000000 !important;
+    border-bottom: 2px solid {WHITE} !important;
+    gap: 0 !important;
+}}
+.stTabs [data-baseweb="tab"] {{
+    background: #000000 !important;
+    color: {WHITE} !important;
+    font-family: 'Space Grotesk', sans-serif !important;
+    font-weight: 700 !important;
+    font-size: 12px !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.08em !important;
+    border-radius: 0 !important;
+    border-right: 1px solid {DARK} !important;
+    padding: 0.75rem 1rem !important;
+}}
+.stTabs [aria-selected="true"] {{
+    background: {LIME} !important;
+    color: #000000 !important;
+    border-bottom: 2px solid {LIME} !important;
+}}
+
+.streamlit-expanderHeader {{
+    background: {SURF} !important;
+    border: 2px solid {WHITE} !important;
+    border-radius: 0 !important;
+    font-family: 'Space Grotesk', sans-serif !important;
+    font-weight: 700 !important;
+    text-transform: uppercase !important;
+    color: {WHITE} !important;
+}}
+.streamlit-expanderContent {{
+    background: {CARD} !important;
+    border: 2px solid {DARK} !important;
+    border-top: none !important;
+}}
+
+.stSelectbox [data-baseweb="select"] > div {{
+    background: #000000 !important;
+    border: 2px solid {WHITE} !important;
+    border-radius: 0 !important;
+    color: {TEXT} !important;
+}}
+
+[data-testid="stMetricValue"] {{
+    font-family: 'Space Grotesk', sans-serif !important;
+    font-size: 2rem !important;
+    font-weight: 900 !important;
+    color: {LIME} !important;
+}}
+[data-testid="stMetricLabel"] {{
+    font-family: 'Space Grotesk', sans-serif !important;
+    font-size: 11px !important;
+    font-weight: 700 !important;
+    text-transform: uppercase !important;
+    letter-spacing: 0.08em !important;
+    color: {MUTED} !important;
+}}
+
+.stProgress > div > div > div {{
+    background: linear-gradient(90deg, {LIME}, #A8D400) !important;
+}}
+.stProgress > div > div {{
+    background: {SURF} !important;
+    border: 1px solid {WHITE} !important;
+    border-radius: 0 !important;
+    height: 12px !important;
+}}
+
+.storm-card {{
+    background: {CARD};
+    border: 2px solid {WHITE};
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+    position: relative;
+    font-family: 'Space Grotesk', sans-serif;
+}}
+.storm-card-lime  {{ box-shadow: 6px 6px 0 0 {LIME}; }}
+.storm-card-pink  {{ box-shadow: 6px 6px 0 0 {PINK}; }}
+.storm-card-cyan  {{ box-shadow: 6px 6px 0 0 {CYAN}; }}
+.storm-card-white {{ box-shadow: 6px 6px 0 0 {WHITE}; }}
+
+.card-badge {{
+    display: inline-block;
+    background: {LIME};
+    color: #000000;
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    margin-bottom: 0.5rem;
+}}
+.card-badge-pink {{ background: {PINK}; color: #ffffff; }}
+.card-badge-cyan {{ background: {CYAN}; color: #000000; }}
+
+.flashcard {{
+    background: {BG};
+    border: 2px solid {LIME};
+    padding: 2rem;
+    text-align: center;
+    min-height: 200px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 6px 6px 0 0 {LIME};
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 18px;
+    font-weight: 700;
+    color: {TEXT};
+    margin-bottom: 1rem;
+}}
+
+.flashcard-answer {{
+    background: {BG};
+    border: 2px solid {CYAN};
+    padding: 2rem;
+    text-align: center;
+    min-height: 150px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 6px 6px 0 0 {CYAN};
+    font-family: 'Inter', sans-serif;
+    font-size: 16px;
+    color: {TEXT};
+    margin-bottom: 1rem;
+    line-height: 1.6;
+}}
+
+.hint-box {{
+    background: rgba(255,162,0,0.08);
+    border: 2px solid {TEXT};
+    padding: 12px 16px;
+    margin-bottom: 1rem;
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 13px;
+    color: {TEXT};
+}}
+
+.nav-btn-dead {{
+    background: #111;
+    border: 2px solid #333;
+    padding: 9px 12px;
+    text-align: center;
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 900;
+    font-size: 12px;
+    color: #444;
+    text-transform: uppercase;
+    cursor: not-allowed;
+    width: 100%;
+    margin-bottom: 8px;
+    letter-spacing: 0.08em;
+}}
+
+.xp-badge {{
+    background: #000;
+    border: 1px solid {LIME};
+    color: {LIME};
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 10px;
+    font-weight: 900;
+    letter-spacing: 0.1em;
+    padding: 2px 8px;
+    text-transform: uppercase;
+}}
+
+.timer-display {{
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 72px;
+    font-weight: 900;
+    color: {LIME};
+    text-align: center;
+    letter-spacing: -0.05em;
+    line-height: 1;
+}}
+
+.quiz-option {{
+    background: {SURF};
+    border: 2px solid {WHITE};
+    padding: 1rem;
+    margin-bottom: 0.5rem;
+    cursor: pointer;
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700;
+    text-transform: uppercase;
+    font-size: 13px;
+    transition: all 0.1s;
+}}
+.quiz-correct {{ background: {LIME} !important; color: #000 !important; border-color: #000 !important; }}
+.quiz-wrong   {{ background: #6B0016 !important; color: #FFB3C1 !important; border-color: {PINK} !important; }}
+
+.rf-answer-box {{
+    background: rgba(0,229,255,0.08);
+    border: 2px solid {CYAN};
+    padding: 1rem 1.25rem;
+    margin-top: 12px;
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700;
+    font-size: 15px;
+    color: {CYAN};
+    box-shadow: 4px 4px 0 0 {CYAN};
+}}
+
+.correct-flash {{
+    background: rgba(202,255,0,0.15);
+    border: 2px solid {LIME};
+    padding: 1rem 1.25rem;
+    margin-top: 12px;
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 900;
+    font-size: 15px;
+    color: {LIME};
+    box-shadow: 4px 4px 0 0 {LIME};
+}}
+
+.wrong-flash {{
+    background: rgba(255,31,109,0.12);
+    border: 2px solid {PINK};
+    padding: 1rem 1.25rem;
+    margin-top: 12px;
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 900;
+    font-size: 15px;
+    color: {PINK};
+    box-shadow: 4px 4px 0 0 {PINK};
+}}
+
+.canvas-container {{
+    border: 2px solid {LIME};
+    background: #fff;
+    border-radius: 0;
+    box-shadow: 6px 6px 0 0 {LIME};
+    margin-bottom: 1rem;
+    cursor: crosshair;
+}}
+
+hr {{
+    border: none;
+    border-top: 2px solid {DARK} !important;
+    margin: 1rem 0 !important;
+}}
+
+::-webkit-scrollbar {{ width: 6px; }}
+::-webkit-scrollbar-track {{ background: {BG}; }}
+::-webkit-scrollbar-thumb {{ background: {LIME}; border-radius: 0; }}
+
+.stSpinner > div {{ border-top-color: {LIME} !important; }}
+
+[data-testid="stMarkdownContainer"] p      {{ color: {TEXT}; line-height: 1.7; }}
+[data-testid="stMarkdownContainer"] strong {{ color: {LIME}; }}
+[data-testid="stMarkdownContainer"] code {{
+    background: {SURF};
+    border: 1px solid {DARK};
+    color: {LIME};
+    font-size: 13px;
+    padding: 2px 6px;
+    border-radius: 0;
+}}
+[data-testid="stMarkdownContainer"] h1,
+[data-testid="stMarkdownContainer"] h2,
+[data-testid="stMarkdownContainer"] h3 {{ color: {LIME} !important; }}
+
+[data-testid="stChatMessage"] {{
+    background: {SURF} !important;
+    border: 1px solid {DARK} !important;
+    border-radius: 0 !important;
+}}
+
+.stSuccess {{ background: rgba(202,255,0,0.08)  !important; border: 1px solid {LIME} !important; border-radius: 0 !important; }}
+.stInfo    {{ background: rgba(0,229,255,0.08)   !important; border: 1px solid {CYAN} !important; border-radius: 0 !important; }}
+.stWarning {{ background: rgba(255,31,109,0.08)  !important; border: 1px solid {PINK} !important; border-radius: 0 !important; }}
+.stError   {{ background: rgba(107,0,22,0.25)    !important; border: 1px solid {PINK} !important; border-radius: 0 !important; }}
+
+.stNumberInput input {{
+    background: #000 !important;
+    border: 2px solid {WHITE} !important;
+    border-radius: 0 !important;
+    color: {TEXT} !important;
+}}
+
+.topbar {{
+    background: #000;
+    border-bottom: 2px solid {WHITE};
+    box-shadow: 0 4px 0 0 {LIME};
+    padding: 16px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 2rem;
+    margin-left: -1rem;
+    margin-right: -1rem;
+}}
+.logo {{
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 24px;
+    font-weight: 900;
+    color: {LIME};
+    letter-spacing: 0.1em;
+    font-style: italic;
+    text-transform: uppercase;
+}}
+.topbar-right {{
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: {MUTED};
+}}
+
+.game-card {{
+    background: {CARD};
+    border: 2px solid {WHITE};
+    padding: 1.5rem;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.1s;
+    box-shadow: 4px 4px 0 0 {WHITE};
+    font-family: 'Space Grotesk', sans-serif;
+}}
+.game-card:hover {{
+    box-shadow: 2px 2px 0 0 {WHITE};
+    transform: translate(2px,2px);
+}}
+
+.scramble-letter {{
+    display: inline-flex;
+    width: 48px; height: 48px;
+    background: {SURF};
+    border: 2px solid {WHITE};
+    align-items: center;
+    justify-content: center;
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 900;
+    font-size: 22px;
+    color: {LIME};
+    margin: 4px;
+    box-shadow: 3px 3px 0 0 {LIME};
+}}
+
+.memory-card {{
+    background: {SURF2};
+    border: 2px solid {WHITE};
+    padding: 16px 8px;
+    text-align: center;
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 900;
+    font-size: 18px;
+    min-height: 80px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer;
+    box-shadow: 3px 3px 0 0 {WHITE};
+    transition: all 0.1s;
+}}
+.memory-card-revealed {{
+    background: {BG};
+    border-color: {CYAN};
+    color: {CYAN};
+    box-shadow: 3px 3px 0 0 {CYAN};
+}}
+.memory-card-matched {{
+    background: rgba(202,255,0,0.1);
+    border-color: {LIME};
+    color: {LIME};
+    box-shadow: 3px 3px 0 0 {LIME};
+}}
+
+.hw-canvas-wrap {{
+    background: #fff;
+    border: 3px solid {LIME};
+    box-shadow: 6px 6px 0 0 {LIME};
+    margin-bottom: 1rem;
+    overflow: hidden;
+}}
+
+.hw-input-section {{
+    background: {CARD};
+    border: 2px solid {LIME};
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+    box-shadow: 6px 6px 0 0 {LIME};
+}}
+</style>
+""", unsafe_allow_html=True)
+
+# ─── SESSION STATE ─────────────────────────────────────────────
+defaults = {
+    "page": "FRONT",
+    "notes_text": "",
+    "notes_file_name": "",
+    "chat_history": [],
+    "flashcards": [],
+    "fc_idx": 0,
+    "fc_show_answer": False,
+    "fc_show_hint": False,
+    "fc_ratings": {},
+    "quiz_questions": [],
+    "quiz_idx": 0,
+    "quiz_score": 0,
+    "quiz_answered": False,
+    "quiz_selected": None,
+    "pomodoro_seconds": 25 * 60,
+    "pomodoro_running": False,
+    "pomodoro_start": None,
+    "pomodoro_mode": "Work",
+    "pomodoro_sessions": 0,
+    "xp": 2450,
+    "streak": 14,
+    "bounties": {"pomodoro": False, "notes": False, "quiz": False},
+    "study_plan": [],
+    "my_notes": [],
+    "handwritten_notes": [],
+    "analytics_data": [30, 45, 20, 85, 60, 75, 40, 90, 55, 80],
+    "theme_model": DEFAULT_MODEL,
+    "word_game_target": "",
+    "word_game_guesses": [],
+    "wg_hint": "",
+    "rf_q": "",
+    "rf_a": "",
+    "rf_hint": "",
+    "rf_show_answer": False,
+    "rf_checked": False,
+    "rf_result": None,
+    "rf_score": 0,
+    "rf_total": 0,
+    "rf_user_input": "",
+    "scramble_word": "",
+    "scramble_answer": "",
+    "scramble_hint": "",
+    "scramble_input": "",
+    "scramble_revealed": False,
+    "memory_cards": [],
+    "memory_revealed": [],
+    "memory_matched": [],
+    "memory_first": None,
+    "memory_second": None,
+    "memory_moves": 0,
+    "memory_score": 0,
+    "tf_question": "",
+    "tf_answer": "",
+    "tf_hint": "",
+    "tf_explanation": "",
+    "tf_checked": False,
+    "tf_user_answer": None,
+    "tf_score": 0,
+    "tf_total": 0,
+    "fib_sentence": "",
+    "fib_answer": "",
+    "fib_hint": "",
+    "fib_checked": False,
+    "fib_score": 0,
+    "fib_total": 0,
+    "translation_result": "",
+    "translation_lang": "",
+}
+for k, v in defaults.items():
+    if k not in st.session_state:
+        st.session_state[k] = v
+
+LANGUAGES = {
+    "Hindi": "Hindi (हिंदी)", "English": "English", "Punjabi": "Punjabi (ਪੰਜਾਬੀ)",
+    "Marathi": "Marathi (मराठी)", "Bengali": "Bengali (বাংলা)", "Tamil": "Tamil (தமிழ்)",
+    "Telugu": "Telugu (తెలుగు)", "Gujarati": "Gujarati (ગુજરાતી)", "Kannada": "Kannada (ಕನ್ನಡ)",
+    "Malayalam": "Malayalam (മലയാളം)", "Urdu": "Urdu (اردو)", "Odia": "Odia (ଓଡ଼ିଆ)",
+    "Japanese": "Japanese (日本語)", "French": "French (Français)", "Spanish": "Spanish (Español)",
+    "German": "German (Deutsch)", "Arabic": "Arabic (العربية)", "Chinese": "Chinese (中文)",
+    "Korean": "Korean (한국어)", "Russian": "Russian (Русский)",
+}
+
+# ─── SIDEBAR ──────────────────────────────────────────────────
+with st.sidebar:
+    try:
+        st.image("logo.png", use_container_width=True)
+    except:
+        st.markdown(f"""
+        <div style="padding:20px 16px 8px; border-bottom:2px solid {WHITE}; margin-bottom:8px;">
+            <div style="font-family:'Space Grotesk',sans-serif; font-size:22px; font-weight:900;
+                        color:{LIME}; letter-spacing:0.1em; font-style:italic;">⚡ BRAINLYTICS</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    st.markdown(f"""
+    <div style="padding:0px 16px 12px; margin-top:-10px; border-bottom:2px solid {WHITE}; margin-bottom:8px;">
+        <div style="font-size:11px; color:{LIME}; font-family:'Space Grotesk',sans-serif;
+                    font-weight:700; text-transform:uppercase; letter-spacing:0.05em;">Your Second Brain, Unlocked</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    xp_pct = min(int(st.session_state.xp / 30), 100)
+    st.markdown(f"""
+    <div style="padding:12px 16px; background:{SURF}; border-bottom:2px solid {DARK}; margin-bottom:8px;">
+        <div style="font-family:'Space Grotesk',sans-serif; font-weight:900; font-size:15px; color:{WHITE};">STORM_BREAKER</div>
+        <div style="font-size:11px; color:{LIME}; font-family:'Space Grotesk',sans-serif; font-weight:700;">
+            LVL 42 | PROMO MODE | 🔥 {st.session_state.streak}D STREAK
+        </div>
+        <div style="margin-top:8px; height:8px; background:{BG}; border:1px solid {WHITE};">
+            <div style="height:100%; width:{xp_pct}%; background:{LIME};"></div>
+        </div>
+        <div style="font-size:10px; color:#666; font-family:'Space Grotesk',sans-serif; margin-top:2px;">
+            {st.session_state.xp} / 3000 XP → VOID_WALKER
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+    nav_pages = [
+        ("🏠", "FRONT"),
+        ("⚡", "DASHBOARD"),
+        ("📤", "UPLOAD NOTES"),
+        ("✍️", "HANDWRITTEN"),
+        ("🌐", "TRANSLATE"),
+        ("📋", "SUMMARY"),
+        ("🔑", "KEY CONCEPTS"),
+        ("🗺️", "MIND MAP"),
+        ("📖", "GLOSSARY"),
+        ("⚖️", "COMPARE"),
+        ("💡", "EXPLAIN"),
+        ("🏷️", "TAGGER"),
+        ("🃏", "FLASHCARDS"),
+        ("🎮", "GAMES"),
+        ("🎯", "EXAM TIPS"),
+        ("📝✍️", "ESSAY"),
+        ("🔄", "SPACED REV."),
+        ("📅", "STUDY PLAN"),
+        ("🍅", "POMODORO"),
+        ("📒", "MY NOTES"),
+        ("🤖", "ASK AI"),
+        ("📊", "ANALYTICS"),
+    ]
+
+    page_order = [p for _, p in nav_pages]
+
+    if st.session_state.page != "FRONT":
+        current_idx = page_order.index(st.session_state.page) if st.session_state.page in page_order else -1
+        if current_idx > 0:
+            prev_icon, prev_page = nav_pages[current_idx - 1]
+            st.markdown('<div class="back-btn-wrap">', unsafe_allow_html=True)
+            if st.button(f"← BACK  {prev_icon} {prev_page}", key="nav_back", use_container_width=True):
+                st.session_state.page = prev_page
+                st.rerun()
+            st.markdown('</div>', unsafe_allow_html=True)
+
+    for icon, page in nav_pages:
+        if st.button(f"{icon}  {page}", key=f"nav_{page}", use_container_width=True):
+            st.session_state.page = page
+            st.rerun()
+
+    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+    with st.expander("⚙️ AI SETTINGS"):
+        available_models = get_ollama_models()
+        chosen = st.selectbox("OLLAMA MODEL", available_models, index=0)
+        st.session_state.theme_model = chosen
+        st.caption("Make sure Ollama is running: `ollama serve`")
+
+# ─── TOP BAR ──────────────────────────────────────────────────
+if st.session_state.page != "FRONT":
+    st.markdown(f"""
+    <div class="topbar">
+        <div class="logo">⚡ BRAINLYTICS</div>
+        <div class="topbar-right">
+            <span>🔥 {st.session_state.streak} DAY STREAK</span>
+            <span style="color:{LIME}">⚡ {st.session_state.xp} XP</span>
+            <span style="border:2px solid {LIME}; padding:4px 10px; color:#000; background:{LIME}; font-weight:900;">
+                {st.session_state.page}
+            </span>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ─── HELPERS ──────────────────────────────────────────────────
+def require_notes() -> bool:
+    if not st.session_state.notes_text.strip():
+        st.markdown(f"""
+        <div class='storm-card storm-card-pink'>
+            <div class='card-badge card-badge-pink'>⚠️ NO NOTES LOADED</div>
+            <div style='font-family:Space Grotesk,sans-serif; font-weight:700; font-size:18px;
+                        text-transform:uppercase; color:{WHITE}; margin-top:8px;'>
+                Upload your notes first!
+            </div>
+            <p style='color:{MUTED}; margin-top:8px;'>
+                Head to the <strong style='color:{PINK};'>UPLOAD NOTES</strong> tab to paste or upload your study material.
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+        return False
+    return True
+
+def add_xp(amount: int, reason: str = ""):
+    st.session_state.xp += amount
+    if reason:
+        st.toast(f"⚡ +{amount} XP — {reason}", icon="🎮")
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE: FRONT
+# ═══════════════════════════════════════════════════════════════
+if st.session_state.page == "FRONT":
+    st.markdown(f"""
+    <style>
+    .noise-bg {{
+        position:fixed;inset:0;background-color:{BG};
+        background-image:
+            radial-gradient(ellipse 80% 60% at 20% 10%,rgba(202,255,0,0.08) 0%,transparent 55%),
+            radial-gradient(ellipse 60% 50% at 80% 80%,rgba(0,229,255,0.07) 0%,transparent 55%),
+            radial-gradient(ellipse 50% 40% at 60% 30%,rgba(255,31,109,0.05) 0%,transparent 50%);
+        z-index:0;pointer-events:none;
+    }}
+    .scanline {{
+        position:fixed;top:0;left:0;right:0;height:3px;
+        background:linear-gradient(90deg,transparent,{LIME},transparent);
+        animation:scan 4s ease-in-out infinite;z-index:2;pointer-events:none;opacity:0.6;
+    }}
+    @keyframes scan {{0%{{top:-3px;opacity:0;}}5%{{opacity:0.6;}}95%{{opacity:0.6;}}100%{{top:100vh;opacity:0;}}}}
+    .logo-mark {{
+        font-family:'Space Grotesk',sans-serif;font-weight:900;
+        font-size:clamp(64px,12vw,110px);line-height:0.9;
+        letter-spacing:-0.06em;text-transform:uppercase;color:{WHITE};
+    }}
+    .status-pill {{
+        display:inline-flex;align-items:center;gap:8px;
+        background:rgba(202,255,0,0.08);border:1px solid rgba(202,255,0,0.3);
+        border-radius:999px;padding:6px 18px;
+        font-family:'Space Grotesk',monospace;font-size:11px;font-weight:700;color:{LIME};
+        letter-spacing:0.12em;text-transform:uppercase;
+    }}
+    .status-dot {{width:6px;height:6px;background:{LIME};border-radius:50%;animation:pulse-dot 1.8s ease infinite;display:inline-block;}}
+    @keyframes pulse-dot {{0%,100%{{opacity:1;transform:scale(1);}}50%{{opacity:0.4;transform:scale(0.7);}}}}
+    </style>
+    <div class="noise-bg"></div>
+    <div class="scanline"></div>
+    """, unsafe_allow_html=True)
+
+    st.markdown(f"""
+    <div style="text-align:center;position:relative;z-index:1;padding-top:2rem;">
+        <div class="status-pill"><span class="status-dot"></span>AI ENGINE ONLINE</div>
+    </div>
+    <div style="text-align:center;position:relative;z-index:1;margin-top:16px;">
+        <div class="logo-mark">BRAIN<span style="color:{LIME};">LY</span><span style="color:{PINK};">T</span>ICS</div>
+        <p style="color:{MUTED};font-family:'Space Grotesk',sans-serif;font-size:18px;margin-top:12px;">
+            Your second brain, unlocked. Study smarter, retain more, score higher.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+
+    st.markdown("<div style='height:24px'></div>", unsafe_allow_html=True)
+    col_l, col_c, col_r = st.columns([2, 2, 2])
+    with col_c:
+        if st.button("⚡  ENTER BRAINLYTICS  →", key="enter_cta", use_container_width=True):
+            st.session_state.page = "DASHBOARD"
+            st.rerun()
+
+    st.markdown(f"""
+    <div style="text-align:center;position:relative;z-index:1;margin-top:28px;padding-bottom:2rem;">
+        <span style='font-family:Space Grotesk,sans-serif;font-size:10px;color:#333;text-transform:uppercase;letter-spacing:0.12em;'>
+            Built with 🤍 by A &amp; D — Now with Handwritten Notes + 5 Games
+        </span>
+    </div>
+    """, unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE: DASHBOARD
+# ═══════════════════════════════════════════════════════════════
+elif st.session_state.page == "DASHBOARD":
+    col1, col2, col3, col4 = st.columns(4)
+    cards = [
+        (col1, "storm-card-lime",  "card-badge",                "TOTAL XP",    f"{st.session_state.xp:,}"),
+        (col2, "storm-card-pink",  "card-badge card-badge-pink","STREAK",      f"🔥 {st.session_state.streak} Days"),
+        (col3, "storm-card-cyan",  "card-badge card-badge-cyan","NOTES",       "YES ✅" if st.session_state.notes_text.strip() else "NO ❌"),
+        (col4, "storm-card-white", "card-badge",                "FLASHCARDS",  str(len(st.session_state.flashcards))),
+    ]
+    for col, card_cls, badge_cls, label, value in cards:
+        with col:
+            st.markdown(f"""<div class='storm-card {card_cls}'>
+                <div class='{badge_cls}'>{label}</div>""", unsafe_allow_html=True)
+            st.metric("", value)
+            st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("---")
+    col_a, col_b = st.columns([3, 2])
+    with col_a:
+        st.markdown(f"""
+        <div class='storm-card storm-card-lime'>
+            <div class='card-badge'>DAILY_BOUNTIES</div>
+            <div style='font-family:Space Grotesk,sans-serif; font-weight:900; font-size:22px; text-transform:uppercase; color:{WHITE}; margin-bottom:12px;'>Today's Missions</div>
+        """, unsafe_allow_html=True)
+        bounties = [("pomodoro","Complete 1 Pomodoro",50),("notes","Upload Study Notes",100),("quiz","Complete AI Quiz",250)]
+        for key, label, xp in bounties:
+            done = st.session_state.bounties[key]
+            bg = LIME if done else SURF
+            tc = "#000" if done else WHITE
+            icon = "✅" if done else "⬜"
+            st.markdown(f"""
+            <div style='background:{bg};color:{tc};border:2px solid {WHITE};padding:12px 16px;margin-bottom:6px;
+                        display:flex;justify-content:space-between;align-items:center;
+                        font-family:Space Grotesk,sans-serif;font-weight:700;font-size:13px;text-transform:uppercase;'>
+                <span>{icon} {label}</span>
+                <span style='background:#000;color:{LIME};padding:2px 8px;font-size:10px;'>+{xp} XP</span>
+            </div>
+            """, unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    with col_b:
+        st.markdown(f"""
+        <div class='storm-card storm-card-pink'>
+            <div class='card-badge card-badge-pink'>RANK_SYSTEM</div>
+            <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:20px;color:{WHITE};text-transform:uppercase;'>STORM_BREAKER</div>
+        """, unsafe_allow_html=True)
+        st.progress(min(st.session_state.xp / 3000, 1.0))
+        st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown(f"""<div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:20px;text-transform:uppercase;color:{WHITE};margin-bottom:12px;'>⚡ QUICK_ACCESS</div>""", unsafe_allow_html=True)
+    qcols = st.columns(6)
+    quick = [("📤","UPLOAD NOTES"),("✍️","HANDWRITTEN"),("📋","SUMMARY"),("🃏","FLASHCARDS"),("🎮","GAMES"),("🍅","POMODORO")]
+    for i, (ico, pg) in enumerate(quick):
+        with qcols[i]:
+            if st.button(f"{ico}\n{pg}", use_container_width=True, key=f"quick_{pg}"):
+                st.session_state.page = pg
+                st.rerun()
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE: HANDWRITTEN NOTES
+# ═══════════════════════════════════════════════════════════════
+elif st.session_state.page == "HANDWRITTEN":
+    st.markdown(f"""<div class='storm-card storm-card-lime'>
+        <div class='card-badge'>✍️ HANDWRITTEN_NOTES</div>
+        <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:24px;text-transform:uppercase;color:{WHITE};'>Handwritten Notes Studio</div>
+        <p style='color:{MUTED};'>Draw, write, and upload your handwritten notes. Upload photos of real notes too!</p>
+    </div>""", unsafe_allow_html=True)
+
+    hw_tab1, hw_tab2, hw_tab3 = st.tabs(["🖊️ DRAW NOTES", "📷 UPLOAD PHOTO", "📚 SAVED HW NOTES"])
+
+    with hw_tab1:
+        st.markdown(f"""
+        <div style='background:{CARD};border:2px solid {WHITE};padding:1rem;margin-bottom:1rem;'>
+            <div class='card-badge'>DIGITAL CANVAS</div>
+            <p style='color:{MUTED};font-size:13px;margin-top:8px;'>Use the canvas below to write your notes digitally.</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        col_tools, col_canvas = st.columns([1, 4])
+        with col_tools:
+            pen_color = st.color_picker("PEN COLOR", "#000000")
+            pen_size  = st.slider("PEN SIZE", 1, 20, 3)
+            bg_color  = st.selectbox("BACKGROUND", ["White", "Yellow (Notepad)", "Dark", "Graph Paper"])
+            bg_map = {"White": "#ffffff", "Yellow (Notepad)": "#FFFDE7", "Dark": "#1a1a1a", "Graph Paper": "#f0f4f8"}
+            chosen_bg = bg_map[bg_color]
+            st.markdown("---")
+            note_title = st.text_input("NOTE TITLE", placeholder="e.g. Chapter 3")
+            note_subject = st.selectbox("SUBJECT TAG", ["General", "Math", "Science", "History", "Language", "Other"])
+
+        with col_canvas:
+            canvas_html = f"""
+            <div style='border:3px solid {LIME};box-shadow:6px 6px 0 0 {LIME};display:inline-block;'>
+            <canvas id='drawCanvas' width='700' height='450'
+                style='background:{chosen_bg};cursor:crosshair;display:block;touch-action:none;'></canvas>
+            </div>
+            <div style='margin-top:8px;display:flex;gap:8px;flex-wrap:wrap;'>
+                <button onclick='clearCanvas()' style='background:{PINK};color:#fff;border:2px solid #fff;padding:8px 16px;
+                    font-family:Space Grotesk,sans-serif;font-weight:900;font-size:12px;text-transform:uppercase;cursor:pointer;'>
+                    🗑️ CLEAR</button>
+                <button onclick='undoLast()' style='background:{SURF};color:{WHITE};border:2px solid {WHITE};padding:8px 16px;
+                    font-family:Space Grotesk,sans-serif;font-weight:900;font-size:12px;text-transform:uppercase;cursor:pointer;'>
+                    ↩️ UNDO</button>
+                <button onclick='saveAsImage()' style='background:{LIME};color:#000;border:2px solid #000;padding:8px 16px;
+                    font-family:Space Grotesk,sans-serif;font-weight:900;font-size:12px;text-transform:uppercase;cursor:pointer;'>
+                    💾 SAVE IMAGE</button>
+            </div>
+            <script>
+            const canvas = document.getElementById('drawCanvas');
+            const ctx = canvas.getContext('2d');
+            let drawing = false;
+            let penColor = '{pen_color}';
+            let penSize = {pen_size};
+            let history = [];
+
+            ctx.fillStyle = '{chosen_bg}';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.strokeStyle = penColor;
+            ctx.lineWidth = penSize;
+            ctx.lineCap = 'round';
+            ctx.lineJoin = 'round';
+
+            function getPos(e) {{
+                const rect = canvas.getBoundingClientRect();
+                const scaleX = canvas.width / rect.width;
+                const scaleY = canvas.height / rect.height;
+                if (e.touches) {{
+                    return {{
+                        x: (e.touches[0].clientX - rect.left) * scaleX,
+                        y: (e.touches[0].clientY - rect.top) * scaleY
+                    }};
+                }}
+                return {{
+                    x: (e.clientX - rect.left) * scaleX,
+                    y: (e.clientY - rect.top) * scaleY
+                }};
+            }}
+
+            canvas.addEventListener('mousedown', (e) => {{
+                history.push(canvas.toDataURL());
+                drawing = true;
+                ctx.strokeStyle = penColor;
+                ctx.lineWidth = penSize;
+                const pos = getPos(e);
+                ctx.beginPath();
+                ctx.moveTo(pos.x, pos.y);
+            }});
+            canvas.addEventListener('mousemove', (e) => {{
+                if (!drawing) return;
+                const pos = getPos(e);
+                ctx.lineTo(pos.x, pos.y);
+                ctx.stroke();
+            }});
+            canvas.addEventListener('mouseup', () => {{ drawing = false; ctx.beginPath(); }});
+            canvas.addEventListener('mouseleave', () => {{ drawing = false; ctx.beginPath(); }});
+            canvas.addEventListener('touchstart', (e) => {{
+                e.preventDefault();
+                history.push(canvas.toDataURL());
+                drawing = true;
+                ctx.strokeStyle = penColor;
+                ctx.lineWidth = penSize;
+                const pos = getPos(e);
+                ctx.beginPath();
+                ctx.moveTo(pos.x, pos.y);
+            }});
+            canvas.addEventListener('touchmove', (e) => {{
+                e.preventDefault();
+                if (!drawing) return;
+                const pos = getPos(e);
+                ctx.lineTo(pos.x, pos.y);
+                ctx.stroke();
+            }});
+            canvas.addEventListener('touchend', () => {{ drawing = false; ctx.beginPath(); }});
+
+            function clearCanvas() {{
+                history.push(canvas.toDataURL());
+                ctx.fillStyle = '{chosen_bg}';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+            }}
+            function undoLast() {{
+                if (history.length > 0) {{
+                    const img = new Image();
+                    img.src = history.pop();
+                    img.onload = () => ctx.drawImage(img, 0, 0);
+                }}
+            }}
+            function saveAsImage() {{
+                const link = document.createElement('a');
+                link.download = 'handwritten_note.png';
+                link.href = canvas.toDataURL('image/png');
+                link.click();
+            }}
+            </script>
+            """
+            st.components.v1.html(canvas_html, height=560, scrolling=False)
+
+        st.markdown("---")
+        st.markdown(f"""<div class='card-badge'>SAVE NOTE TO VAULT</div>""", unsafe_allow_html=True)
+        note_content = st.text_area("ADD TEXT NOTES (to go with your drawing)", height=100,
+                                    placeholder="Key points from this drawing...")
+        if st.button("💾 SAVE HANDWRITTEN NOTE TO VAULT", use_container_width=True):
+            if note_title:
+                st.session_state.handwritten_notes.append({
+                    "title": note_title.upper(),
+                    "subject": note_subject,
+                    "content": note_content,
+                    "created": datetime.now().strftime("%b %d, %Y %H:%M"),
+                    "type": "drawn"
+                })
+                add_xp(30, "Saved handwritten note")
+                st.success("✅ Note saved to vault!")
+                st.rerun()
+            else:
+                st.error("Enter a title first!")
+
+    with hw_tab2:
+        st.markdown(f"""
+        <div class='storm-card storm-card-cyan'>
+            <div class='card-badge card-badge-cyan'>📷 UPLOAD YOUR PHYSICAL NOTES</div>
+            <p style='color:{MUTED};'>Snap a photo of your handwritten notes and upload here.</p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        uploaded_img = st.file_uploader("UPLOAD PHOTO OF HANDWRITTEN NOTES", type=["png","jpg","jpeg","webp"])
+        if uploaded_img:
+            st.image(uploaded_img, caption="Your Handwritten Notes", use_container_width=True)
+            img_title   = st.text_input("NOTE TITLE", placeholder="e.g. Bio Chapter 4 - My Notes")
+            img_subject = st.selectbox("SUBJECT", ["General","Math","Science","History","Language","Other"], key="img_subject")
+            img_notes   = st.text_area("ADD CONTEXT / DESCRIPTION", height=80,
+                                       placeholder="What subject is this? Any key points you remember?")
+
+            col_a, col_b = st.columns(2)
+            with col_a:
+                if st.button("💾 SAVE PHOTO TO VAULT", use_container_width=True):
+                    if img_title:
+                        img_bytes  = uploaded_img.read()
+                        img_b64    = base64.b64encode(img_bytes).decode()
+                        img_type   = uploaded_img.type
+                        st.session_state.handwritten_notes.append({
+                            "title":    img_title.upper(),
+                            "subject":  img_subject,
+                            "content":  img_notes,
+                            "image_b64":img_b64,
+                            "img_type": img_type,
+                            "created":  datetime.now().strftime("%b %d, %Y %H:%M"),
+                            "type":     "photo"
+                        })
+                        add_xp(25, "Uploaded handwritten photo")
+                        st.success("✅ Photo note saved!")
+                        st.rerun()
+                    else:
+                        st.error("Enter a title!")
+            with col_b:
+                if st.button("🤖 AI: LOAD INTO NOTES", use_container_width=True):
+                    if img_notes.strip():
+                        extra = f"\n\n[Handwritten Note - {img_title}]\n{img_notes}"
+                        st.session_state.notes_text += extra
+                        st.success("✅ Added to active notes!")
+                    else:
+                        st.info("Add a description first.")
+
+    with hw_tab3:
+        if st.session_state.handwritten_notes:
+            st.markdown(f"""<div class='card-badge'>{len(st.session_state.handwritten_notes)} HANDWRITTEN NOTES</div>""", unsafe_allow_html=True)
+            cols = st.columns(3)
+            for i, note in enumerate(reversed(st.session_state.handwritten_notes)):
+                with cols[i % 3]:
+                    color = ["lime","pink","cyan","white"][i % 4]
+                    has_img = "image_b64" in note
+                    st.markdown(f"""
+                    <div class='storm-card storm-card-{color}'>
+                        <div class='card-badge'>{'📷 PHOTO' if has_img else '🖊️ DRAWN'}</div>
+                        <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:14px;color:{WHITE};text-transform:uppercase;margin-bottom:4px;'>{note["title"]}</div>
+                        <div style='font-size:11px;color:#555;margin-bottom:8px;'>{note["created"]} · {note["subject"]}</div>
+                        <div style='font-size:13px;color:{MUTED};'>{note.get("content","")[:80]}{'...' if len(note.get("content","")) > 80 else ''}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    if has_img:
+                        img_data = base64.b64decode(note["image_b64"])
+                        st.image(BytesIO(img_data), use_container_width=True)
+        else:
+            st.markdown(f"""
+            <div style='text-align:center;padding:3rem;border:2px dashed {DARK};
+                        color:{DARK};font-family:Space Grotesk,sans-serif;font-weight:700;font-size:14px;text-transform:uppercase;'>
+                📭 No handwritten notes yet. Start drawing or upload a photo!
+            </div>
+            """, unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE: UPLOAD NOTES
+# ═══════════════════════════════════════════════════════════════
+elif st.session_state.page == "UPLOAD NOTES":
+    st.markdown(f"""<div class='storm-card storm-card-lime'>
+        <div class='card-badge'>UPLOAD_ZONE</div>
+        <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:24px;text-transform:uppercase;color:{WHITE};margin-bottom:4px;'>Load Your Notes</div>
+        <p style='color:{MUTED};'>Upload a .txt/.pdf file, paste text, or type your handwritten notes directly.</p>
+    </div>""", unsafe_allow_html=True)
+
+    tab1, tab2, tab3 = st.tabs(["📁 UPLOAD FILE", "✏️ PASTE TEXT", "✍️ TYPE HANDWRITTEN NOTES"])
+
+    with tab1:
+        uploaded_file = st.file_uploader("DROP YOUR NOTES HERE", type=["txt","pdf"], label_visibility="visible")
+        if uploaded_file:
+            if uploaded_file.type == "text/plain":
+                content = uploaded_file.read().decode("utf-8", errors="ignore")
+            elif uploaded_file.type == "application/pdf":
+                try:
+                    from pypdf import PdfReader
+                    reader = PdfReader(BytesIO(uploaded_file.read()))
+                    content = "\n".join(p.extract_text() or "" for p in reader.pages)
+                except ImportError:
+                    content = ""
+                    st.error("Install pypdf: `pip install pypdf`")
+            else:
+                content = uploaded_file.read().decode("utf-8", errors="ignore")
+            if content.strip():
+                st.session_state.notes_text = content
+                st.session_state.notes_file_name = uploaded_file.name
+                st.session_state.bounties["notes"] = True
+                add_xp(100, "Notes uploaded")
+                st.success(f"✅ Loaded **{uploaded_file.name}** — {len(content):,} characters")
+                with st.expander("📄 PREVIEW"):
+                    st.text(content[:2000] + ("..." if len(content) > 2000 else ""))
+
+    with tab2:
+        pasted = st.text_area("PASTE YOUR NOTES HERE", height=300,
+                              placeholder="Copy-paste your lecture notes, textbook excerpts, study material...")
+        if st.button("⚡ LOAD NOTES", use_container_width=True, key="load_pasted"):
+            if pasted.strip():
+                st.session_state.notes_text = pasted
+                st.session_state.notes_file_name = "Pasted Notes"
+                st.session_state.bounties["notes"] = True
+                add_xp(100, "Notes pasted")
+                st.success(f"✅ Loaded {len(pasted):,} characters of notes!")
+            else:
+                st.error("⚠️ Paste some notes first!")
+
+    with tab3:
+        st.markdown(f"""
+        <div style='background:{CARD};border:2px solid {LIME};padding:1.25rem;margin-bottom:1rem;box-shadow:6px 6px 0 0 {LIME};'>
+            <div class='card-badge'>✍️ TYPE YOUR HANDWRITTEN NOTES</div>
+            <p style='color:{MUTED};font-size:13px;margin-top:8px;'>
+                Transcribe your physical/handwritten notes here. They'll be loaded as active notes
+                so you can use all AI features (summary, flashcards, games etc.)
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+
+        hw_subject_tag = st.selectbox(
+            "SUBJECT / TOPIC TAG",
+            ["General", "Math", "Physics", "Chemistry", "Biology", "History",
+             "Geography", "Economics", "Computer Science", "Language", "Other"],
+            key="hw_subject_upload"
+        )
+        hw_chapter = st.text_input("CHAPTER / TOPIC NAME", placeholder="e.g. Chapter 5 — Photosynthesis", key="hw_chapter_upload")
+        hw_typed_notes = st.text_area(
+            "YOUR HANDWRITTEN NOTES (type them out here)",
+            height=350,
+            placeholder="""Type or transcribe your handwritten notes here...
+
+Example format:
+• Key Point 1: Definition or explanation
+• Key Point 2: Formula or concept
+• Important term: Its meaning""",
+            key="hw_typed_content"
+        )
+
+        col_hw1, col_hw2, col_hw3 = st.columns(3)
+        with col_hw1:
+            if st.button("⚡ LOAD AS ACTIVE NOTES", use_container_width=True, key="hw_load_active"):
+                if hw_typed_notes.strip():
+                    header = f"[{hw_subject_tag.upper()}]"
+                    if hw_chapter.strip():
+                        header += f" — {hw_chapter.strip()}"
+                    header += "\n" + "="*50 + "\n\n"
+                    full_content = header + hw_typed_notes
+                    st.session_state.notes_text = full_content
+                    st.session_state.notes_file_name = f"Handwritten: {hw_chapter or hw_subject_tag}"
+                    st.session_state.bounties["notes"] = True
+                    add_xp(100, "Handwritten notes loaded!")
+                    st.success(f"✅ Loaded {len(hw_typed_notes):,} characters!")
+                else:
+                    st.error("Type your notes first!")
+        with col_hw2:
+            if st.button("➕ APPEND TO EXISTING NOTES", use_container_width=True, key="hw_append"):
+                if hw_typed_notes.strip():
+                    header = f"\n\n--- [{hw_subject_tag.upper()}]"
+                    if hw_chapter.strip():
+                        header += f" — {hw_chapter.strip()}"
+                    header += " ---\n"
+                    st.session_state.notes_text += header + hw_typed_notes
+                    st.session_state.bounties["notes"] = True
+                    add_xp(50, "Notes appended!")
+                    st.success("✅ Appended to existing notes!")
+                else:
+                    st.error("Type your notes first!")
+        with col_hw3:
+            if st.button("💾 SAVE TO HW VAULT", use_container_width=True, key="hw_save_vault"):
+                if hw_typed_notes.strip() and hw_chapter.strip():
+                    st.session_state.handwritten_notes.append({
+                        "title": hw_chapter.upper(),
+                        "subject": hw_subject_tag,
+                        "content": hw_typed_notes,
+                        "created": datetime.now().strftime("%b %d, %Y %H:%M"),
+                        "type": "typed"
+                    })
+                    add_xp(30, "Saved to HW vault!")
+                    st.success("✅ Saved to Handwritten Notes Vault!")
+                else:
+                    st.error("Add a chapter name and some notes first!")
+
+        st.markdown(f"""
+        <div style='background:{BG};border:2px solid {DARK};padding:1rem;margin-top:1rem;'>
+            <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:11px;
+                        text-transform:uppercase;color:{MUTED};letter-spacing:0.1em;margin-bottom:8px;'>💡 PRO TIPS</div>
+            <div style='font-size:12px;color:#555;line-height:1.7;'>
+                • Use bullet points or numbered lists for better AI understanding<br>
+                • Include headings like "Key Concepts:" or "Formulas:" for better summaries<br>
+                • The more detail you type, the better flashcards and summaries you'll get
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    if st.session_state.notes_text.strip():
+        st.markdown("---")
+        st.markdown(f"""
+        <div class='storm-card storm-card-cyan'>
+            <div class='card-badge card-badge-cyan'>ACTIVE_FILE</div>
+            <div style='font-family:Space Grotesk,sans-serif;font-weight:700;color:{WHITE};'>
+                📄 {st.session_state.notes_file_name} &nbsp;|&nbsp;
+                {len(st.session_state.notes_text):,} chars &nbsp;|&nbsp;
+                ~{len(st.session_state.notes_text.split()):,} words
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        if st.button("🗑️ CLEAR NOTES"):
+            st.session_state.notes_text = ""
+            st.session_state.notes_file_name = ""
+            st.rerun()
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE: TRANSLATE
+# ═══════════════════════════════════════════════════════════════
+elif st.session_state.page == "TRANSLATE":
+    st.markdown(f"""<div class='storm-card storm-card-cyan'>
+        <div class='card-badge card-badge-cyan'>🌐 TRANSLATION_ENGINE</div>
+        <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:24px;text-transform:uppercase;color:{WHITE};'>Translate Your Notes</div>
+    </div>""", unsafe_allow_html=True)
+    if not require_notes(): st.stop()
+
+    col1, col2 = st.columns([2, 3])
+    with col1:
+        lang_key = st.selectbox("TARGET LANGUAGE", list(LANGUAGES.keys()))
+        translate_type = st.radio("WHAT TO TRANSLATE", ["Full Notes", "Custom Text"])
+        custom_text = ""
+        if translate_type == "Custom Text":
+            custom_text = st.text_area("YOUR TEXT", height=150)
+        if st.button("🌐 TRANSLATE NOW", use_container_width=True):
+            source = (custom_text if translate_type == "Custom Text" else st.session_state.notes_text[:3000])
+            with st.spinner(f"Translating to {lang_key}..."):
+                result = ollama_generate(
+                    f"Translate the following text to {LANGUAGES[lang_key]}. "
+                    f"Preserve all key terms, headings, and structure. Output only the translated text:\n\n{source}",
+                    st.session_state.theme_model
+                )
+            st.session_state["translation_result"] = result
+            st.session_state["translation_lang"] = lang_key
+            add_xp(30, f"Translated to {lang_key}")
+    with col2:
+        if st.session_state.get("translation_result"):
+            st.markdown(f"""<div class='card-badge card-badge-cyan'>{st.session_state.get('translation_lang','').upper()} TRANSLATION</div>""", unsafe_allow_html=True)
+            st.markdown(f"""
+            <div style='background:{BG};border:2px solid {CYAN};padding:1.5rem;box-shadow:6px 6px 0 0 {CYAN};
+                        min-height:300px;font-family:Inter,sans-serif;line-height:1.8;color:{TEXT};font-size:15px;white-space:pre-wrap;'>
+                {st.session_state.get('translation_result','')}
+            </div>
+            """, unsafe_allow_html=True)
+            st.download_button("📥 DOWNLOAD TRANSLATION", st.session_state["translation_result"],
+                               file_name=f"translation_{lang_key.lower()}.txt", use_container_width=True)
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE: SUMMARY
+# ═══════════════════════════════════════════════════════════════
+elif st.session_state.page == "SUMMARY":
+    st.markdown(f"""<div class='storm-card storm-card-lime'>
+        <div class='card-badge'>📋 SUMMARY_ENGINE</div>
+        <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:24px;text-transform:uppercase;color:{WHITE};'>AI Summary</div>
+    </div>""", unsafe_allow_html=True)
+    if not require_notes(): st.stop()
+
+    length = st.radio("SUMMARY LENGTH", ["Short (100 words)", "Medium (250 words)", "Detailed (500 words)"], horizontal=True)
+    style  = st.radio("SUMMARY STYLE",  ["Bullet Points", "Paragraph", "5 Key Takeaways"], horizontal=True)
+
+    if st.button("⚡ GENERATE SUMMARY", use_container_width=True):
+        word_count = length.split("(")[1].rstrip(")")
+        with st.spinner("AI is reading your notes..."):
+            result = ollama_generate(
+                f"Summarize the following study notes in {word_count} using {style} format. "
+                f"Use clear, Gen Z-friendly language. Highlight the most important concepts.\n\n"
+                f"{st.session_state.notes_text[:4000]}", st.session_state.theme_model
+            )
+        st.session_state["summary_result"] = result
+        add_xp(40, "Generated summary")
+
+    if "summary_result" in st.session_state:
+        st.markdown(f"""<div class='card-badge'>✅ SUMMARY READY</div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div style='background:{BG};border:2px solid {LIME};padding:1.5rem;box-shadow:6px 6px 0 0 {LIME};min-height:200px;'>""", unsafe_allow_html=True)
+        st.markdown(st.session_state["summary_result"])
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.download_button("📥 SAVE SUMMARY", st.session_state["summary_result"], file_name="summary.txt", use_container_width=True)
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE: KEY CONCEPTS
+# ═══════════════════════════════════════════════════════════════
+elif st.session_state.page == "KEY CONCEPTS":
+    st.markdown(f"""<div class='storm-card storm-card-pink'>
+        <div class='card-badge card-badge-pink'>🔑 KEY_CONCEPTS</div>
+        <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:24px;text-transform:uppercase;color:{WHITE};'>Core Ideas Extraction</div>
+    </div>""", unsafe_allow_html=True)
+    if not require_notes(): st.stop()
+
+    if st.button("🔑 EXTRACT KEY CONCEPTS", use_container_width=True):
+        with st.spinner("Extracting concepts..."):
+            result = ollama_generate(
+                "Extract the 8-12 most important key concepts from these study notes. "
+                "For each: 1) Name 2) 1-sentence definition 3) Importance (⭐⭐⭐⭐⭐ to ⭐). "
+                "Format: **CONCEPT** (stars)\nDefinition\n---\n\n"
+                f"{st.session_state.notes_text[:4000]}", st.session_state.theme_model
+            )
+        st.session_state["concepts_result"] = result
+        add_xp(35, "Extracted key concepts")
+
+    if "concepts_result" in st.session_state:
+        blocks = st.session_state["concepts_result"].split("---")
+        colors_cycle = ["lime","pink","cyan","white"]
+        cols = st.columns(2)
+        for i, block in enumerate(blocks):
+            if block.strip():
+                with cols[i % 2]:
+                    c = colors_cycle[i % len(colors_cycle)]
+                    st.markdown(f"""
+                    <div class='storm-card storm-card-{c}'>
+                        <div style='font-family:Inter,sans-serif;font-size:14px;color:{TEXT};line-height:1.7;'>{block.strip()}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE: MIND MAP
+# ═══════════════════════════════════════════════════════════════
+elif st.session_state.page == "MIND MAP":
+    st.markdown(f"""<div class='storm-card storm-card-cyan'>
+        <div class='card-badge card-badge-cyan'>🗺️ MIND_MAP_GEN</div>
+        <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:24px;text-transform:uppercase;color:{WHITE};'>Visual Mind Map</div>
+    </div>""", unsafe_allow_html=True)
+    if not require_notes(): st.stop()
+
+    if st.button("🗺️ GENERATE MIND MAP", use_container_width=True):
+        with st.spinner("Building mind map..."):
+            result = ollama_generate(
+                "Create a hierarchical mind map using ASCII art with indented branches.\n"
+                "CENTRAL TOPIC\n├── Branch 1\n│   ├── Sub 1.1\n│   └── Sub 1.2\n├── Branch 2\n└── Branch 3\n\n"
+                f"Notes:\n{st.session_state.notes_text[:3000]}", st.session_state.theme_model
+            )
+        st.session_state["mindmap_result"] = result
+        add_xp(40, "Created mind map")
+
+    if "mindmap_result" in st.session_state:
+        st.code(st.session_state["mindmap_result"], language=None)
+        st.download_button("📥 SAVE MIND MAP", st.session_state["mindmap_result"], file_name="mindmap.txt", use_container_width=True)
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE: GLOSSARY
+# ═══════════════════════════════════════════════════════════════
+elif st.session_state.page == "GLOSSARY":
+    st.markdown(f"""<div class='storm-card storm-card-lime'>
+        <div class='card-badge'>📖 GLOSSARY_BUILDER</div>
+        <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:24px;text-transform:uppercase;color:{WHITE};'>Term Glossary</div>
+    </div>""", unsafe_allow_html=True)
+    if not require_notes(): st.stop()
+
+    if st.button("📖 BUILD GLOSSARY", use_container_width=True):
+        with st.spinner("Identifying terms..."):
+            result = ollama_generate(
+                "Create a glossary from these study notes. List 10-15 important terms with clear definitions.\n"
+                f"Format: **TERM**: Definition\n\nNotes:\n{st.session_state.notes_text[:4000]}",
+                st.session_state.theme_model
+            )
+        st.session_state["glossary_result"] = result
+        add_xp(30, "Built glossary")
+
+    if "glossary_result" in st.session_state:
+        for line in st.session_state["glossary_result"].split("\n"):
+            if line.strip() and ":" in line:
+                parts = line.split(":", 1)
+                if len(parts) == 2:
+                    term = parts[0].replace("**","").strip()
+                    defn = parts[1].strip()
+                    st.markdown(f"""
+                    <div style='background:{CARD};border-left:4px solid {LIME};padding:10px 16px;margin-bottom:8px;'>
+                        <span style='font-family:Space Grotesk,sans-serif;font-weight:900;color:{LIME};font-size:14px;text-transform:uppercase;'>{term}</span>
+                        <br><span style='color:{TEXT};font-size:14px;'>{defn}</span>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE: COMPARE
+# ═══════════════════════════════════════════════════════════════
+elif st.session_state.page == "COMPARE":
+    st.markdown(f"""<div class='storm-card storm-card-pink'>
+        <div class='card-badge card-badge-pink'>⚖️ COMPARE_ENGINE</div>
+        <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:24px;text-transform:uppercase;color:{WHITE};'>Compare Concepts</div>
+    </div>""", unsafe_allow_html=True)
+    if not require_notes(): st.stop()
+
+    col1, col2 = st.columns(2)
+    with col1: concept_a = st.text_input("CONCEPT A", placeholder="e.g. Mitosis")
+    with col2: concept_b = st.text_input("CONCEPT B", placeholder="e.g. Meiosis")
+    if st.button("⚖️ COMPARE NOW", use_container_width=True):
+        if concept_a and concept_b:
+            with st.spinner(f"Comparing..."):
+                result = ollama_generate(
+                    f"Compare '{concept_a}' and '{concept_b}' based on these notes. "
+                    f"Cover: 1) Similarities 2) Key Differences 3) When to use each 4) Memory tip.\n\n"
+                    f"Notes:\n{st.session_state.notes_text[:3000]}", st.session_state.theme_model
+                )
+            st.session_state["compare_result"] = result
+            st.session_state["compare_label"] = f"{concept_a} vs {concept_b}"
+            add_xp(35, "Compared concepts")
+        else:
+            st.error("Enter both concepts!")
+    if "compare_result" in st.session_state:
+        st.markdown(f"""<div class='card-badge card-badge-pink'>{st.session_state['compare_label'].upper()}</div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div style='background:{BG};border:2px solid {PINK};padding:1.5rem;box-shadow:6px 6px 0 0 {PINK};'>""", unsafe_allow_html=True)
+        st.markdown(st.session_state["compare_result"])
+        st.markdown("</div>", unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE: EXPLAIN
+# ═══════════════════════════════════════════════════════════════
+elif st.session_state.page == "EXPLAIN":
+    st.markdown(f"""<div class='storm-card storm-card-cyan'>
+        <div class='card-badge card-badge-cyan'>💡 EXPLAIN_MODE</div>
+        <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:24px;text-transform:uppercase;color:{WHITE};'>Explain Like I'm 5</div>
+    </div>""", unsafe_allow_html=True)
+    if not require_notes(): st.stop()
+
+    topic = st.text_input("WHAT DO YOU WANT EXPLAINED?", placeholder="e.g. Explain the krebs cycle")
+    level = st.radio("EXPLAIN LEVEL", ["ELI5 (Super Simple)", "Student Level", "Deep Dive", "Analogy + Example"], horizontal=True)
+    if st.button("💡 EXPLAIN IT", use_container_width=True):
+        if topic:
+            with st.spinner("Crafting explanation..."):
+                result = ollama_generate(
+                    f"Explain '{topic}' using {level} style. Make it engaging for a Gen Z student. "
+                    f"Use examples, analogies, and real-world connections.\n\nNotes:\n{st.session_state.notes_text[:3000]}",
+                    st.session_state.theme_model
+                )
+            st.session_state["explain_result"] = result
+            add_xp(30, f"Explained {topic}")
+        else:
+            st.error("Enter a topic!")
+    if "explain_result" in st.session_state:
+        st.markdown(f"""<div style='background:{BG};border:2px solid {CYAN};padding:1.5rem;box-shadow:6px 6px 0 0 {CYAN};'>""", unsafe_allow_html=True)
+        st.markdown(st.session_state["explain_result"])
+        st.markdown("</div>", unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE: TAGGER
+# ═══════════════════════════════════════════════════════════════
+elif st.session_state.page == "TAGGER":
+    st.markdown(f"""<div class='storm-card storm-card-lime'>
+        <div class='card-badge'>🏷️ AUTO_TAGGER</div>
+        <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:24px;text-transform:uppercase;color:{WHITE};'>Smart Tags</div>
+    </div>""", unsafe_allow_html=True)
+    if not require_notes(): st.stop()
+    if st.button("🏷️ AUTO-TAG NOTES", use_container_width=True):
+        with st.spinner("Analyzing..."):
+            result = ollama_generate(
+                "Analyze these notes and provide:\n1. SUBJECT TAGS (3-5)\n2. TOPIC TAGS (5-8)\n"
+                "3. DIFFICULTY: Beginner/Intermediate/Advanced\n4. EXAM READINESS: X/10\n"
+                "5. RECOMMENDED STUDY TIME: X hours\n6. RELATED SUBJECTS\n\n"
+                f"Notes:\n{st.session_state.notes_text[:3000]}", st.session_state.theme_model
+            )
+        st.session_state["tagger_result"] = result
+        add_xp(20, "Tagged notes")
+    if "tagger_result" in st.session_state:
+        st.markdown(f"""<div style='background:{BG};border:2px solid {LIME};padding:1.5rem;box-shadow:6px 6px 0 0 {LIME};'>""", unsafe_allow_html=True)
+        st.markdown(st.session_state["tagger_result"])
+        st.markdown("</div>", unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE: FLASHCARDS — FIXED PREV/NEXT navigation
+# ═══════════════════════════════════════════════════════════════
+elif st.session_state.page == "FLASHCARDS":
+    st.markdown(f"""<div class='storm-card storm-card-pink'>
+        <div class='card-badge card-badge-pink'>🃏 FLASHCARD_DECK</div>
+        <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:24px;text-transform:uppercase;color:{WHITE};'>Flashcard Generator</div>
+        <p style='color:{MUTED};'>AI-generated flashcards with hints, ratings, and spaced repetition.</p>
+    </div>""", unsafe_allow_html=True)
+    if not require_notes(): st.stop()
+
+    gen_col, settings_col = st.columns([3, 1])
+    with settings_col:
+        num_cards = st.slider("NUMBER OF CARDS", 5, 20, 10)
+    with gen_col:
+        if st.button("🃏 GENERATE FLASHCARDS", use_container_width=True):
+            with st.spinner("Creating flashcards with hints..."):
+                raw = ollama_generate(
+                    f"Generate exactly {num_cards} flashcards from these study notes. "
+                    f"Format STRICTLY as:\nQ: [question]\nA: [answer]\nH: [one helpful hint, not the answer]\n---\n"
+                    f"Make questions test deep understanding.\n\nNotes:\n{st.session_state.notes_text[:4000]}",
+                    st.session_state.theme_model
+                )
+            cards = []
+            for block in raw.split("---"):
+                lines = block.strip().split("\n")
+                q, a, h = "", "", ""
+                for line in lines:
+                    if line.startswith("Q:"): q = line[2:].strip()
+                    elif line.startswith("A:"): a = line[2:].strip()
+                    elif line.startswith("H:"): h = line[2:].strip()
+                if q and a:
+                    cards.append({"q": q, "a": a, "hint": h or "Think about the core concept...", "revealed": False})
+            st.session_state.flashcards      = cards
+            st.session_state.fc_idx          = 0
+            st.session_state.fc_show_answer  = False
+            st.session_state.fc_show_hint    = False
+            st.session_state.fc_ratings      = {}
+            add_xp(50, "Generated flashcards")
+            st.rerun()
+
+    if not st.session_state.flashcards:
+        st.markdown(f"""
+        <div style='text-align:center;padding:3rem;border:2px dashed {DARK};color:{DARK};
+                    font-family:Space Grotesk,sans-serif;font-weight:700;text-transform:uppercase;'>
+            Generate flashcards to start studying
+        </div>
+        """, unsafe_allow_html=True)
+        st.stop()
+
+    total = len(st.session_state.flashcards)
+
+    # Clamp idx
+    st.session_state.fc_idx = max(0, min(st.session_state.fc_idx, total - 1))
+
+    rated     = len(st.session_state.fc_ratings)
+    easy_cnt  = sum(1 for r in st.session_state.fc_ratings.values() if r == "easy")
+    hard_cnt  = sum(1 for r in st.session_state.fc_ratings.values() if r in ("hard","again"))
+
+    s1, s2, s3, s4 = st.columns(4)
+    with s1:
+        st.markdown(f"""<div style='background:{BG};border:2px solid {LIME};padding:12px;text-align:center;'>
+            <div style='font-size:10px;color:#555;font-family:Space Grotesk,sans-serif;text-transform:uppercase;'>TOTAL CARDS</div>
+            <div style='font-size:28px;font-weight:900;color:{LIME};font-family:Space Grotesk,sans-serif;'>{total}</div>
+        </div>""", unsafe_allow_html=True)
+    with s2:
+        st.markdown(f"""<div style='background:{BG};border:2px solid {CYAN};padding:12px;text-align:center;'>
+            <div style='font-size:10px;color:#555;font-family:Space Grotesk,sans-serif;text-transform:uppercase;'>REVIEWED</div>
+            <div style='font-size:28px;font-weight:900;color:{CYAN};font-family:Space Grotesk,sans-serif;'>{rated}</div>
+        </div>""", unsafe_allow_html=True)
+    with s3:
+        st.markdown(f"""<div style='background:{BG};border:2px solid {LIME};padding:12px;text-align:center;'>
+            <div style='font-size:10px;color:#555;font-family:Space Grotesk,sans-serif;text-transform:uppercase;'>EASY ✅</div>
+            <div style='font-size:28px;font-weight:900;color:{LIME};font-family:Space Grotesk,sans-serif;'>{easy_cnt}</div>
+        </div>""", unsafe_allow_html=True)
+    with s4:
+        st.markdown(f"""<div style='background:{BG};border:2px solid {PINK};padding:12px;text-align:center;'>
+            <div style='font-size:10px;color:#555;font-family:Space Grotesk,sans-serif;text-transform:uppercase;'>NEED WORK 🔴</div>
+            <div style='font-size:28px;font-weight:900;color:{PINK};font-family:Space Grotesk,sans-serif;'>{hard_cnt}</div>
+        </div>""", unsafe_allow_html=True)
+
+    st.markdown("<div style='height:16px'></div>", unsafe_allow_html=True)
+    st.progress((st.session_state.fc_idx + 1) / total)
+
+    idx  = st.session_state.fc_idx
+    card = st.session_state.flashcards[idx]
+
+    card_col, action_col = st.columns([3, 1])
+
+    with card_col:
+        st.markdown(f"""
+        <div style='font-family:Space Grotesk,sans-serif;font-weight:700;font-size:12px;
+                    color:#555;text-transform:uppercase;margin-bottom:8px;'>CARD {idx+1} / {total}</div>
+        """, unsafe_allow_html=True)
+
+        st.markdown(f"""
+        <div class='flashcard'>
+            <div>
+                <div style='font-size:10px;color:{LIME};font-weight:900;letter-spacing:0.1em;margin-bottom:12px;'>❓ QUESTION</div>
+                <div style='font-size:18px;line-height:1.5;'>{card['q']}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        if st.session_state.fc_show_hint:
+            st.markdown(f"""
+            <div class='hint-box'>
+                <div style='font-size:10px;font-weight:900;letter-spacing:0.1em;margin-bottom:4px;'>💡 HINT</div>
+                {card['hint']}
+            </div>
+            """, unsafe_allow_html=True)
+
+        if st.session_state.fc_show_answer:
+            st.markdown(f"""
+            <div class='flashcard-answer'>
+                <div>
+                    <div style='font-size:10px;color:{CYAN};font-weight:900;font-family:Space Grotesk,sans-serif;letter-spacing:0.1em;margin-bottom:8px;'>✅ ANSWER</div>
+                    <div style='font-size:16px;'>{card['a']}</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            st.markdown(f"""<div class='card-badge'>RATE THIS CARD</div>""", unsafe_allow_html=True)
+            r1, r2, r3, r4 = st.columns(4)
+
+            def rate_and_advance(rating: str, xp_amt: int, reason: str):
+                st.session_state.fc_ratings[st.session_state.fc_idx] = rating
+                st.session_state.fc_show_answer = False
+                st.session_state.fc_show_hint   = False
+                add_xp(xp_amt, reason)
+                if st.session_state.fc_idx < len(st.session_state.flashcards) - 1:
+                    st.session_state.fc_idx += 1
+
+            with r1:
+                if st.button("😅 AGAIN", use_container_width=True, key="rate_again"):
+                    rate_and_advance("again", 2, "Card rated")
+                    st.rerun()
+            with r2:
+                if st.button("😬 HARD", use_container_width=True, key="rate_hard"):
+                    rate_and_advance("hard", 5, "Card rated")
+                    st.rerun()
+            with r3:
+                if st.button("🙂 MEDIUM", use_container_width=True, key="rate_med"):
+                    rate_and_advance("medium", 8, "Card rated")
+                    st.rerun()
+            with r4:
+                if st.button("😎 EASY", use_container_width=True, key="rate_easy"):
+                    rate_and_advance("easy", 10, "Card rated easy!")
+                    st.rerun()
+
+    # ── ACTION COLUMN ──────────────────────────────────────────
+    with action_col:
+        st.markdown("<div style='height:10px'></div>", unsafe_allow_html=True)
+
+        # Show/Hide Hint
+        hint_label = "🙈 HIDE HINT" if st.session_state.fc_show_hint else "💡 SHOW HINT"
+        if st.button(hint_label, use_container_width=True, key="hint_btn"):
+            st.session_state.fc_show_hint = not st.session_state.fc_show_hint
+            st.rerun()
+
+        # Show/Hide Answer
+        ans_label = "🙈 HIDE ANSWER" if st.session_state.fc_show_answer else "👁️ REVEAL ANSWER"
+        if st.button(ans_label, use_container_width=True, key="ans_btn"):
+            st.session_state.fc_show_answer = not st.session_state.fc_show_answer
+            if st.session_state.fc_show_answer:
+                st.session_state.fc_show_hint = False
+            st.rerun()
+
+        st.markdown("---")
+
+        # ══════════════════════════════════════════════════════
+        # NAVIGATION — flat layout, index-stamped keys
+        # No nested columns, no disabled kwarg.
+        # Each card index gets a unique key so Streamlit never
+        # reuses a stale widget registration across reruns.
+        # ══════════════════════════════════════════════════════
+
+        # PREV button
+        if idx > 0:
+            if st.button(
+                "⬅️  PREV",
+                use_container_width=True,
+                key=f"fc_prev_{idx}",   # index-stamped = fresh key every card
+            ):
+                st.session_state.fc_idx        -= 1
+                st.session_state.fc_show_answer = False
+                st.session_state.fc_show_hint   = False
+                st.rerun()
+        else:
+            st.markdown(
+                "<div class='nav-btn-dead'>⬅️  PREV</div>",
+                unsafe_allow_html=True,
+            )
+
+        # NEXT button
+        if idx < total - 1:
+            if st.button(
+                "NEXT  ➡️",
+                use_container_width=True,
+                key=f"fc_next_{idx}",   # index-stamped = fresh key every card
+            ):
+                st.session_state.fc_idx        += 1
+                st.session_state.fc_show_answer = False
+                st.session_state.fc_show_hint   = False
+                add_xp(5, "Reviewed flashcard")
+                st.rerun()
+        else:
+            st.markdown(
+                "<div class='nav-btn-dead'>NEXT  ➡️</div>",
+                unsafe_allow_html=True,
+            )
+
+        # ── SHUFFLE ──
+        st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+        if st.button("🔀 SHUFFLE", use_container_width=True, key="fc_shuffle"):
+            random.shuffle(st.session_state.flashcards)
+            st.session_state.fc_idx          = 0
+            st.session_state.fc_show_answer  = False
+            st.session_state.fc_show_hint    = False
+            st.session_state.fc_ratings      = {}
+            st.rerun()
+
+        # ── JUMP TO CARD ──
+        st.markdown(f"<div style='font-size:10px;color:#555;font-family:Space Grotesk,sans-serif;"
+                    f"text-transform:uppercase;margin-top:10px;margin-bottom:4px;'>JUMP TO CARD</div>",
+                    unsafe_allow_html=True)
+        jump = st.number_input("", min_value=1, max_value=total, value=idx+1, key="fc_jump", label_visibility="collapsed")
+        if st.button("GO", use_container_width=True, key="fc_go"):
+            st.session_state.fc_idx          = int(jump) - 1
+            st.session_state.fc_show_answer  = False
+            st.session_state.fc_show_hint    = False
+            st.rerun()
+
+        st.markdown("---")
+
+        # ── CURRENT RATING DISPLAY ──
+        current_rating = st.session_state.fc_ratings.get(idx)
+        if current_rating:
+            colors_r = {"easy": LIME, "medium": CYAN, "hard": TEXT, "again": PINK}
+            labels_r = {"easy": "😎 EASY", "medium": "🙂 MEDIUM", "hard": "😬 HARD", "again": "😅 AGAIN"}
+            c = colors_r.get(current_rating, WHITE)
+            l = labels_r.get(current_rating, current_rating.upper())
+            st.markdown(f"""
+            <div style='background:{BG};border:2px solid {c};padding:8px;text-align:center;
+                        font-family:Space Grotesk,sans-serif;font-weight:900;font-size:11px;color:{c};text-transform:uppercase;'>
+                RATED: {l}
+            </div>
+            """, unsafe_allow_html=True)
+
+        # ── STUDY HARD CARDS ──
+        hard_cards = [i for i, r in st.session_state.fc_ratings.items() if r in ("hard","again")]
+        if hard_cards and st.button(f"🔁 HARD CARDS ({len(hard_cards)})", use_container_width=True, key="fc_hard"):
+            hard_deck = [st.session_state.flashcards[i] for i in hard_cards]
+            st.session_state.flashcards      = hard_deck
+            st.session_state.fc_idx          = 0
+            st.session_state.fc_show_answer  = False
+            st.session_state.fc_show_hint    = False
+            st.session_state.fc_ratings      = {}
+            st.rerun()
+
+    st.markdown("---")
+    fc_text = "\n\n".join([f"Q: {c['q']}\nH: {c['hint']}\nA: {c['a']}" for c in st.session_state.flashcards])
+    st.download_button("📥 DOWNLOAD ALL FLASHCARDS", fc_text, file_name="flashcards.txt", use_container_width=True)
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE: GAMES
+# ═══════════════════════════════════════════════════════════════
+elif st.session_state.page == "GAMES":
+    st.markdown(f"""<div class='storm-card storm-card-cyan'>
+        <div class='card-badge card-badge-cyan'>🎮 GAME_ZONE v2</div>
+        <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:24px;text-transform:uppercase;color:{WHITE};'>Study Games</div>
+        <p style='color:{MUTED};'>5 games. Real XP. All from your notes.</p>
+    </div>""", unsafe_allow_html=True)
+
+    if not require_notes(): st.stop()
+
+    game_tab1, game_tab2, game_tab3, game_tab4, game_tab5 = st.tabs([
+        "🔤 WORD GUESS", "⚡ RAPID FIRE", "🔀 WORD SCRAMBLE", "🃏 MEMORY MATCH", "✅ TRUE/FALSE"
+    ])
+
+    # ─── GAME 1: WORD GUESS ────────────────────────────────────
+    with game_tab1:
+        st.markdown(f"""
+        <div class='storm-card storm-card-lime'>
+            <div class='card-badge'>WORD STORM — Guess the study term!</div>
+            <div style='font-size:11px;color:{MUTED};margin-top:4px;'>You have 6 tries to guess the word from your notes.</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        wg_col1, wg_col2 = st.columns([3, 1])
+        with wg_col2:
+            if st.button("🎲 NEW WORD", use_container_width=True, key="wg_new"):
+                with st.spinner("Picking a term..."):
+                    raw = ollama_generate(
+                        "Extract ONE important single-word term from these notes. "
+                        f"Output ONLY the word, nothing else.\n\n{st.session_state.notes_text[:2000]}",
+                        st.session_state.theme_model
+                    )
+                    raw_hint = ollama_generate(
+                        f"Give ONE short hint for the term '{raw.strip()}' without revealing it. Max 10 words.",
+                        st.session_state.theme_model
+                    )
+                target = raw.strip().upper().replace("**","").split()[0][:15]
+                st.session_state.word_game_target  = target
+                st.session_state.word_game_guesses = []
+                st.session_state["wg_hint"]        = raw_hint.strip()
+                st.rerun()
+
+        with wg_col1:
+            target   = st.session_state.word_game_target
+            guesses  = st.session_state.word_game_guesses
+            max_tries = 6
+
+            if target:
+                display = " ".join([l if l in guesses or l == " " else "_" for l in target])
+                wrong_guesses = [g for g in guesses if g not in target]
+                remaining = max_tries - len(wrong_guesses)
+
+                st.markdown(f"""
+                <div style='font-family:Space Grotesk,sans-serif;font-size:40px;font-weight:900;
+                            letter-spacing:0.2em;color:{LIME};text-align:center;padding:20px;
+                            border:2px solid {LIME};background:#000;box-shadow:6px 6px 0 0 {LIME};margin-bottom:12px;'>
+                    {display}
+                </div>
+                <div style='font-family:Space Grotesk,sans-serif;text-align:center;margin-bottom:8px;'>
+                    <span style='font-size:13px;color:{WHITE};'>Tries left: {"❤️" * remaining}{"🖤" * (max_tries - remaining)}</span>
+                    &nbsp;|&nbsp;
+                    <span style='font-size:11px;color:#555;'>Wrong: {", ".join(wrong_guesses) or "none"}</span>
+                </div>
+                """, unsafe_allow_html=True)
+
+                if st.session_state.get("wg_hint"):
+                    st.markdown(f"""
+                    <div class='hint-box'>
+                        <span style='font-weight:900;color:{TEXT};'>💡 HINT:</span> {st.session_state.get("wg_hint","")}
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                rows = ["QWERTYUIOP", "ASDFGHJKL", "ZXCVBNM"]
+                won  = all(c in guesses or c == " " for c in target)
+                lost = remaining == 0 and not won
+
+                if not won and not lost:
+                    for row in rows:
+                        cols = st.columns(len(row))
+                        for i, letter in enumerate(row):
+                            with cols[i]:
+                                guessed = letter in guesses
+                                if st.button(letter, key=f"wg_{letter}", use_container_width=True, disabled=guessed):
+                                    st.session_state.word_game_guesses.append(letter)
+                                    if letter in target:
+                                        add_xp(10, f"Correct! +{letter}")
+                                    st.rerun()
+
+                if won:
+                    st.success(f"🎉 YOU GOT IT! The word was **{target}**! +50 XP")
+                    add_xp(50, "Won word game")
+                elif lost:
+                    st.error(f"💀 OUT OF TRIES! The word was **{target}**")
+                    if st.button("🔄 TRY AGAIN", use_container_width=True, key="wg_retry"):
+                        st.session_state.word_game_guesses = []
+                        st.rerun()
+            else:
+                st.info("Click **NEW WORD** to start playing!")
+
+    # ─── GAME 2: RAPID FIRE ────────────────────────────────────
+    with game_tab2:
+        st.markdown(f"""
+        <div class='storm-card storm-card-pink'>
+            <div class='card-badge card-badge-pink'>⚡ RAPID FIRE — Answer as fast as you can!</div>
+            <div style='display:flex;gap:24px;margin-top:8px;'>
+                <span style='font-family:Space Grotesk,sans-serif;font-weight:900;color:{LIME};'>
+                    SCORE: {st.session_state.rf_score}/{st.session_state.rf_total}
+                </span>
+                <span style='font-family:Space Grotesk,sans-serif;font-weight:700;color:{MUTED};'>
+                    {f"ACC: {int(st.session_state.rf_score/st.session_state.rf_total*100)}%" if st.session_state.rf_total > 0 else "ACC: --"}
+                </span>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        rf_col1, rf_col2 = st.columns([3, 1])
+        with rf_col2:
+            if st.button("🎯 NEW QUESTION", use_container_width=True, key="rf_new"):
+                with st.spinner("Generating..."):
+                    raw = ollama_generate(
+                        "Generate 1 rapid fire quiz question from these notes. "
+                        f"Format STRICTLY:\nQ: [question]\nA: [short answer, max 5 words]\nH: [one-line hint]\n\n"
+                        f"Notes:\n{st.session_state.notes_text[:2000]}",
+                        st.session_state.theme_model
+                    )
+                q, a, h = "", "", ""
+                for line in raw.split("\n"):
+                    if line.startswith("Q:"): q = line[2:].strip()
+                    elif line.startswith("A:"): a = line[2:].strip()
+                    elif line.startswith("H:"): h = line[2:].strip()
+                st.session_state.rf_q           = q
+                st.session_state.rf_a           = a
+                st.session_state.rf_hint        = h
+                st.session_state.rf_show_answer = False
+                st.session_state.rf_checked     = False
+                st.session_state.rf_result      = None
+                st.session_state.rf_user_input  = ""
+                st.rerun()
+
+            if st.button("🔄 RESET SCORE", use_container_width=True, key="rf_reset"):
+                st.session_state.rf_score = 0
+                st.session_state.rf_total = 0
+                st.rerun()
+
+        with rf_col1:
+            if st.session_state.rf_q:
+                st.markdown(f"""
+                <div style='background:{BG};border:2px solid {PINK};padding:1.25rem;
+                            box-shadow:4px 4px 0 0 {PINK};margin-bottom:1rem;
+                            font-family:Space Grotesk,sans-serif;font-weight:700;font-size:18px;color:{WHITE};'>
+                    ❓ {st.session_state.rf_q}
+                </div>
+                """, unsafe_allow_html=True)
+
+                show_rf_hint = st.checkbox("💡 SHOW HINT", key="rf_hint_chk")
+                if show_rf_hint and st.session_state.rf_hint:
+                    st.markdown(f"""
+                    <div class='hint-box'>
+                        <span style='font-weight:900;'>💡 HINT:</span> {st.session_state.rf_hint}
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                if not st.session_state.rf_checked:
+                    with st.form(key="rf_form", clear_on_submit=False):
+                        user_ans = st.text_input(
+                            "YOUR ANSWER",
+                            value=st.session_state.rf_user_input,
+                            placeholder="Type your answer and press CHECK...",
+                            key="rf_text_field"
+                        )
+                        form_col1, form_col2 = st.columns(2)
+                        with form_col1:
+                            check_pressed = st.form_submit_button("✅ CHECK ANSWER", use_container_width=True)
+                        with form_col2:
+                            reveal_pressed = st.form_submit_button("👁️ REVEAL ANSWER", use_container_width=True)
+
+                    if check_pressed:
+                        st.session_state.rf_user_input = user_ans
+                        correct = st.session_state.rf_a.lower()
+                        user_lower = user_ans.lower().strip()
+                        correct_words = [w for w in correct.split() if len(w) > 2]
+                        is_correct = (user_lower != "" and
+                                      any(w in user_lower for w in correct_words)) or user_lower == correct
+                        st.session_state.rf_checked = True
+                        st.session_state.rf_result  = is_correct
+                        st.session_state.rf_total  += 1
+                        if is_correct:
+                            st.session_state.rf_score += 1
+                            add_xp(25, "Rapid fire correct!")
+                        st.rerun()
+
+                    if reveal_pressed:
+                        st.session_state.rf_show_answer = True
+                        st.session_state.rf_checked     = True
+                        st.session_state.rf_total      += 1
+                        st.session_state.rf_result      = False
+                        st.rerun()
+
+                else:
+                    if st.session_state.rf_user_input:
+                        st.markdown(f"""
+                        <div style='background:{SURF};border:2px solid {DARK};padding:10px 14px;margin-bottom:8px;
+                                    font-family:Space Grotesk,sans-serif;font-size:14px;color:{MUTED};'>
+                            <span style='font-size:10px;font-weight:900;color:#555;text-transform:uppercase;display:block;margin-bottom:4px;'>YOUR ANSWER</span>
+                            {st.session_state.rf_user_input}
+                        </div>
+                        """, unsafe_allow_html=True)
+
+                    if st.session_state.rf_result:
+                        st.markdown(f"""<div class='correct-flash'>🔥 CORRECT! Well done!</div>""", unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"""<div class='wrong-flash'>❌ Wrong! But learning is winning.</div>""", unsafe_allow_html=True)
+
+                    st.markdown(f"""
+                    <div class='rf-answer-box'>
+                        <div style='font-size:10px;font-weight:900;letter-spacing:0.1em;margin-bottom:4px;'>✅ CORRECT ANSWER</div>
+                        {st.session_state.rf_a}
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+                    if st.button("➡️ NEXT QUESTION", use_container_width=True, key="rf_next_q"):
+                        st.session_state.rf_checked     = False
+                        st.session_state.rf_result      = None
+                        st.session_state.rf_show_answer = False
+                        st.session_state.rf_user_input  = ""
+                        st.session_state.rf_q           = ""
+                        st.rerun()
+            else:
+                st.info("Click **NEW QUESTION** to start the rapid fire round!")
+
+    # ─── GAME 3: WORD SCRAMBLE ─────────────────────────────────
+    with game_tab3:
+        st.markdown(f"""
+        <div class='storm-card storm-card-lime'>
+            <div class='card-badge'>🔀 WORD SCRAMBLE — Unscramble the term!</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        sc_col1, sc_col2 = st.columns([3, 1])
+        with sc_col2:
+            if st.button("🎲 NEW SCRAMBLE", use_container_width=True, key="sc_new"):
+                with st.spinner("Picking term..."):
+                    raw = ollama_generate(
+                        "Extract ONE important single word (5-10 letters) from these notes. "
+                        f"Output ONLY the word.\n\n{st.session_state.notes_text[:2000]}",
+                        st.session_state.theme_model
+                    )
+                    word = raw.strip().upper().replace("**","").split()[0][:12]
+                    hint_raw = ollama_generate(
+                        f"Give a 1-sentence definition/hint for '{word}' from these notes. Max 15 words.",
+                        st.session_state.theme_model
+                    )
+                    letters = list(word)
+                    random.shuffle(letters)
+                    scrambled = "".join(letters)
+                    if scrambled == word:
+                        random.shuffle(letters)
+                        scrambled = "".join(letters)
+                st.session_state.scramble_word     = word
+                st.session_state.scramble_answer   = scrambled
+                st.session_state.scramble_hint     = hint_raw.strip()
+                st.session_state.scramble_input    = ""
+                st.session_state.scramble_revealed = False
+                st.rerun()
+
+        with sc_col1:
+            if st.session_state.scramble_word:
+                word      = st.session_state.scramble_word
+                scrambled = st.session_state.scramble_answer
+
+                letters_html = "".join([f"<span class='scramble-letter'>{l}</span>" for l in scrambled])
+                st.markdown(f"""
+                <div style='text-align:center;padding:1.5rem;border:2px solid {LIME};background:#000;
+                            box-shadow:6px 6px 0 0 {LIME};margin-bottom:1rem;'>
+                    <div style='font-size:10px;color:{LIME};font-family:Space Grotesk,sans-serif;font-weight:900;
+                                letter-spacing:0.1em;margin-bottom:12px;'>UNSCRAMBLE THIS WORD ({len(word)} letters)</div>
+                    <div>{letters_html}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+                if st.session_state.scramble_hint:
+                    st.markdown(f"""
+                    <div class='hint-box'>
+                        <span style='font-weight:900;'>💡 HINT:</span> {st.session_state.scramble_hint}
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                sc_ans = st.text_input("YOUR ANSWER", placeholder="Type the unscrambled word...", key="sc_input")
+                c1, c2, c3 = st.columns(3)
+                with c1:
+                    if st.button("✅ CHECK", use_container_width=True, key="sc_check"):
+                        if sc_ans.strip().upper() == word:
+                            st.success(f"🎉 CORRECT! The word was **{word}**! +30 XP")
+                            add_xp(30, "Unscrambled correctly!")
+                        else:
+                            st.error(f"❌ Not quite! Try again.")
+                with c2:
+                    if st.button("👁️ REVEAL", use_container_width=True, key="sc_reveal"):
+                        st.session_state.scramble_revealed = True
+                        st.rerun()
+                with c3:
+                    if st.button("🔀 RE-SHUFFLE", use_container_width=True, key="sc_reshuffle"):
+                        letters = list(word)
+                        random.shuffle(letters)
+                        st.session_state.scramble_answer = "".join(letters)
+                        st.rerun()
+
+                if st.session_state.scramble_revealed:
+                    st.markdown(f"""
+                    <div class='rf-answer-box'>
+                        <div style='font-size:10px;font-weight:900;letter-spacing:0.1em;margin-bottom:4px;'>✅ ANSWER</div>
+                        {word}
+                    </div>
+                    """, unsafe_allow_html=True)
+            else:
+                st.info("Click **NEW SCRAMBLE** to start!")
+
+    # ─── GAME 4: MEMORY MATCH ──────────────────────────────────
+    with game_tab4:
+        st.markdown(f"""
+        <div class='storm-card storm-card-pink'>
+            <div class='card-badge card-badge-pink'>🃏 MEMORY MATCH — Match terms to definitions!</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        mm_col1, mm_col2 = st.columns([4, 1])
+        with mm_col2:
+            if st.button("🎲 NEW GAME", use_container_width=True, key="mm_new"):
+                with st.spinner("Generating pairs..."):
+                    raw = ollama_generate(
+                        "Generate 4 term-definition pairs from these notes. "
+                        "Format STRICTLY:\nTERM: [term]\nDEF: [short definition, max 8 words]\n---\n\n"
+                        f"Notes:\n{st.session_state.notes_text[:2000]}",
+                        st.session_state.theme_model
+                    )
+                pairs = []
+                for block in raw.split("---"):
+                    lines = block.strip().split("\n")
+                    t, d = "", ""
+                    for line in lines:
+                        if line.startswith("TERM:"): t = line[5:].strip()
+                        elif line.startswith("DEF:"):  d = line[4:].strip()
+                    if t and d:
+                        pairs.append((t, d))
+                if len(pairs) >= 3:
+                    cards = []
+                    for i, (t, d) in enumerate(pairs[:4]):
+                        cards.append({"id": f"t{i}", "text": t, "pair": i, "type": "term"})
+                        cards.append({"id": f"d{i}", "text": d, "pair": i, "type": "def"})
+                    random.shuffle(cards)
+                    st.session_state.memory_cards    = cards
+                    st.session_state.memory_revealed = []
+                    st.session_state.memory_matched  = []
+                    st.session_state.memory_first    = None
+                    st.session_state.memory_second   = None
+                    st.session_state.memory_moves    = 0
+                    st.session_state.memory_score    = 0
+                    st.rerun()
+                else:
+                    st.error("Could not generate pairs. Try with more notes content.")
+
+            if st.session_state.memory_cards:
+                matched = len(st.session_state.memory_matched) // 2
+                total_p = len(st.session_state.memory_cards)  // 2
+                st.markdown(f"""
+                <div style='background:{BG};border:2px solid {LIME};padding:12px;text-align:center;margin-top:8px;'>
+                    <div style='font-size:10px;color:#555;font-family:Space Grotesk,sans-serif;text-transform:uppercase;'>PAIRS</div>
+                    <div style='font-size:24px;font-weight:900;color:{LIME};font-family:Space Grotesk,sans-serif;'>{matched}/{total_p}</div>
+                    <div style='font-size:10px;color:#555;font-family:Space Grotesk,sans-serif;'>MOVES: {st.session_state.memory_moves}</div>
+                </div>
+                """, unsafe_allow_html=True)
+
+        with mm_col1:
+            if st.session_state.memory_cards:
+                cards    = st.session_state.memory_cards
+                revealed = st.session_state.memory_revealed
+                matched  = st.session_state.memory_matched
+
+                cols = st.columns(4)
+                for i, card in enumerate(cards):
+                    with cols[i % 4]:
+                        is_revealed = card["id"] in revealed
+                        is_matched  = card["id"] in matched
+
+                        if is_matched:
+                            st.markdown(f"""
+                            <div class='memory-card memory-card-matched'>
+                                <div style='font-size:11px;font-weight:900;color:{LIME};'>✅</div>
+                                <div style='font-size:12px;line-height:1.3;'>{card["text"]}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        elif is_revealed:
+                            card_color = LIME if card["type"] == "term" else CYAN
+                            st.markdown(f"""
+                            <div class='memory-card memory-card-revealed' style='border-color:{card_color};color:{card_color};'>
+                                <div style='font-size:10px;font-weight:900;'>{card["type"].upper()}</div>
+                                <div style='font-size:12px;line-height:1.3;'>{card["text"]}</div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        else:
+                            if st.button("🃏", key=f"mm_card_{i}", use_container_width=True):
+                                if len([r for r in revealed if r not in matched]) < 2:
+                                    revealed.append(card["id"])
+                                    st.session_state.memory_revealed = revealed
+                                    unmatched_revealed = [r for r in revealed if r not in matched]
+                                    if len(unmatched_revealed) == 2:
+                                        st.session_state.memory_moves += 1
+                                        id1, id2 = unmatched_revealed
+                                        c1 = next(c for c in cards if c["id"] == id1)
+                                        c2 = next(c for c in cards if c["id"] == id2)
+                                        if c1["pair"] == c2["pair"] and c1["type"] != c2["type"]:
+                                            matched.extend([id1, id2])
+                                            st.session_state.memory_matched = matched
+                                            add_xp(20, "Memory match found!")
+                                        else:
+                                            st.session_state.memory_revealed = list(matched)
+                                    st.rerun()
+
+                if len(matched) == len(cards) and len(cards) > 0:
+                    st.success(f"🎉 PERFECT! All pairs matched in {st.session_state.memory_moves} moves! +50 XP")
+                    add_xp(50, "Completed memory game!")
+            else:
+                st.info("Click **NEW GAME** to generate a memory match game!")
+
+    # ─── GAME 5: TRUE / FALSE ──────────────────────────────────
+    with game_tab5:
+        st.markdown(f"""
+        <div class='storm-card storm-card-cyan'>
+            <div class='card-badge card-badge-cyan'>✅ TRUE/FALSE — Test your knowledge!</div>
+            <div style='font-family:Space Grotesk,sans-serif;font-weight:900;color:{WHITE};margin-top:4px;'>
+                SCORE: {st.session_state.tf_score}/{st.session_state.tf_total}
+                {"  |  ACC: " + str(int(st.session_state.tf_score/st.session_state.tf_total*100)) + "%" if st.session_state.tf_total > 0 else ""}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+        tf_col1, tf_col2 = st.columns([3, 1])
+        with tf_col2:
+            if st.button("🎲 NEW STATEMENT", use_container_width=True, key="tf_new"):
+                with st.spinner("Generating..."):
+                    raw = ollama_generate(
+                        "Generate 1 True/False statement from these study notes. "
+                        "Format STRICTLY:\nS: [statement]\nA: [True or False]\nH: [one-line hint]\n"
+                        "E: [brief explanation why it's true or false]\n\n"
+                        f"Notes:\n{st.session_state.notes_text[:2000]}",
+                        st.session_state.theme_model
+                    )
+                s, a, h, e = "", "", "", ""
+                for line in raw.split("\n"):
+                    if line.startswith("S:"): s = line[2:].strip()
+                    elif line.startswith("A:"): a = line[2:].strip().lower()
+                    elif line.startswith("H:"): h = line[2:].strip()
+                    elif line.startswith("E:"): e = line[2:].strip()
+                st.session_state.tf_question    = s
+                st.session_state.tf_answer      = a
+                st.session_state.tf_hint        = h
+                st.session_state.tf_explanation = e
+                st.session_state.tf_checked     = False
+                st.session_state.tf_user_answer = None
+                st.rerun()
+
+            if st.button("🔄 RESET SCORE", use_container_width=True, key="tf_reset"):
+                st.session_state.tf_score = 0
+                st.session_state.tf_total = 0
+                st.rerun()
+
+        with tf_col1:
+            if st.session_state.tf_question:
+                st.markdown(f"""
+                <div style='background:{BG};border:2px solid {CYAN};padding:1.5rem;
+                            box-shadow:4px 4px 0 0 {CYAN};margin-bottom:1rem;
+                            font-family:Space Grotesk,sans-serif;font-weight:700;font-size:18px;color:{WHITE};'>
+                    📋 {st.session_state.tf_question}
+                </div>
+                """, unsafe_allow_html=True)
+
+                show_tf_hint = st.checkbox("💡 SHOW HINT", key="tf_hint_chk")
+                if show_tf_hint and st.session_state.tf_hint:
+                    st.markdown(f"""
+                    <div class='hint-box'>
+                        <span style='font-weight:900;'>💡 HINT:</span> {st.session_state.tf_hint}
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                if not st.session_state.tf_checked:
+                    t_col, f_col = st.columns(2)
+                    with t_col:
+                        if st.button("✅ TRUE", use_container_width=True, key="tf_true"):
+                            st.session_state.tf_user_answer = "true"
+                            st.session_state.tf_checked     = True
+                            st.session_state.tf_total      += 1
+                            if "true" in st.session_state.tf_answer:
+                                st.session_state.tf_score += 1
+                                add_xp(20, "T/F correct!")
+                            st.rerun()
+                    with f_col:
+                        if st.button("❌ FALSE", use_container_width=True, key="tf_false"):
+                            st.session_state.tf_user_answer = "false"
+                            st.session_state.tf_checked     = True
+                            st.session_state.tf_total      += 1
+                            if "false" in st.session_state.tf_answer:
+                                st.session_state.tf_score += 1
+                                add_xp(20, "T/F correct!")
+                            st.rerun()
+                else:
+                    correct_ans = st.session_state.tf_answer
+                    user_ans    = st.session_state.tf_user_answer
+                    is_correct  = user_ans is not None and user_ans.lower() in correct_ans.lower()
+
+                    if is_correct:
+                        st.markdown(f"""<div class='correct-flash'>🔥 CORRECT! Great job!</div>""", unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"""<div class='wrong-flash'>❌ Wrong! The answer was: {correct_ans.upper()}</div>""", unsafe_allow_html=True)
+
+                    st.markdown(f"""
+                    <div class='rf-answer-box'>
+                        <div style='font-size:10px;font-weight:900;letter-spacing:0.1em;margin-bottom:4px;'>
+                            ✅ ANSWER: {st.session_state.tf_answer.upper()}
+                        </div>
+                        <div style='font-size:14px;margin-top:8px;color:{MUTED};'>{st.session_state.tf_explanation}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
+                    if st.button("➡️ NEXT STATEMENT", use_container_width=True, key="tf_next"):
+                        st.session_state.tf_checked     = False
+                        st.session_state.tf_user_answer = None
+                        st.session_state.tf_question    = ""
+                        st.rerun()
+            else:
+                st.info("Click **NEW STATEMENT** to start the True/False round!")
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE: EXAM TIPS
+# ═══════════════════════════════════════════════════════════════
+elif st.session_state.page == "EXAM TIPS":
+    st.markdown(f"""<div class='storm-card storm-card-lime'>
+        <div class='card-badge'>🎯 EXAM_PREP_MODE</div>
+        <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:24px;text-transform:uppercase;color:{WHITE};'>Exam Tips & Strategy</div>
+    </div>""", unsafe_allow_html=True)
+    if not require_notes(): st.stop()
+    exam_type = st.radio("EXAM TYPE", ["Multiple Choice","Essay/Long Answer","Short Answer","Mixed"], horizontal=True)
+    time_left = st.selectbox("TIME UNTIL EXAM", ["1 Day","3 Days","1 Week","2 Weeks","1 Month"])
+    if st.button("🎯 GET EXAM TIPS", use_container_width=True):
+        with st.spinner("Strategizing..."):
+            result = ollama_generate(
+                f"Exam coach for {exam_type} exam, {time_left} away. From these notes provide:\n"
+                f"1. TOP 5 LIKELY EXAM QUESTIONS with model answers\n"
+                f"2. KEY FACTS to memorize (with mnemonics)\n3. COMMON MISTAKES to avoid\n"
+                f"4. {time_left} STUDY SCHEDULE\n5. LAST-MINUTE TIPS\n\nNotes:\n{st.session_state.notes_text[:4000]}",
+                st.session_state.theme_model
+            )
+        st.session_state["examtips_result"] = result
+        add_xp(50, "Got exam tips")
+    if "examtips_result" in st.session_state:
+        st.markdown(f"""<div style='background:{BG};border:2px solid {LIME};padding:1.5rem;box-shadow:6px 6px 0 0 {LIME};'>""", unsafe_allow_html=True)
+        st.markdown(st.session_state["examtips_result"])
+        st.markdown("</div>", unsafe_allow_html=True)
+        st.download_button("📥 SAVE EXAM TIPS", st.session_state["examtips_result"], file_name="exam_tips.txt", use_container_width=True)
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE: ESSAY
+# ═══════════════════════════════════════════════════════════════
+elif st.session_state.page == "ESSAY":
+    st.markdown(f"""<div class='storm-card storm-card-pink'>
+        <div class='card-badge card-badge-pink'>✍️ ESSAY_FORGE</div>
+        <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:24px;text-transform:uppercase;color:{WHITE};'>Essay Generator</div>
+    </div>""", unsafe_allow_html=True)
+    if not require_notes(): st.stop()
+    essay_topic = st.text_input("ESSAY TOPIC / QUESTION", placeholder="e.g. Discuss the role of mitochondria in cellular respiration")
+    col1, col2, col3 = st.columns(3)
+    with col1: essay_len   = st.selectbox("LENGTH", ["Short (300w)","Medium (600w)","Long (1000w)"])
+    with col2: essay_style = st.selectbox("STYLE",  ["Academic","Simple","Critical Analysis","Argumentative"])
+    with col3: essay_level = st.selectbox("LEVEL",  ["High School","Undergraduate","Postgraduate"])
+    if st.button("✍️ GENERATE ESSAY", use_container_width=True):
+        if essay_topic:
+            word_count = essay_len.split("(")[1].rstrip("w)")
+            with st.spinner("Writing your essay..."):
+                result = ollama_generate(
+                    f"Write a {word_count}-word {essay_style} essay at {essay_level} level "
+                    f"on: '{essay_topic}'. Include Introduction, Body, Conclusion.\n\nNotes:\n{st.session_state.notes_text[:4000]}",
+                    st.session_state.theme_model
+                )
+            st.session_state["essay_result"] = result
+            add_xp(60, "Generated essay")
+        else:
+            st.error("Enter an essay topic!")
+    if "essay_result" in st.session_state:
+        st.markdown(f"""<div style='background:{BG};border:2px solid {PINK};padding:2rem;box-shadow:6px 6px 0 0 {PINK};font-family:Inter,sans-serif;line-height:1.8;color:{TEXT};'>
+            {st.session_state["essay_result"]}
+        </div>""", unsafe_allow_html=True)
+        st.download_button("📥 DOWNLOAD ESSAY", st.session_state["essay_result"], file_name="essay.txt", use_container_width=True)
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE: SPACED REV.
+# ═══════════════════════════════════════════════════════════════
+elif st.session_state.page == "SPACED REV.":
+    st.markdown(f"""<div class='storm-card storm-card-cyan'>
+        <div class='card-badge card-badge-cyan'>🔄 SPACED_REVISION</div>
+        <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:24px;text-transform:uppercase;color:{WHITE};'>Spaced Repetition Schedule</div>
+    </div>""", unsafe_allow_html=True)
+    if not require_notes(): st.stop()
+    if st.button("🔄 CREATE REVISION SCHEDULE", use_container_width=True):
+        with st.spinner("Building plan..."):
+            result = ollama_generate(
+                "Create a spaced repetition schedule (Ebbinghaus curve):\n"
+                "Day 1 | Day 3 | Day 7 | Day 14 | Day 30\n"
+                "For each: topics to review, method, time, focus areas.\n\n"
+                f"Notes:\n{st.session_state.notes_text[:3000]}", st.session_state.theme_model
+            )
+        st.session_state["spaced_result"] = result
+        add_xp(40, "Created revision schedule")
+    if "spaced_result" in st.session_state:
+        st.markdown(f"""<div style='background:{BG};border:2px solid {CYAN};padding:1.5rem;box-shadow:6px 6px 0 0 {CYAN};'>""", unsafe_allow_html=True)
+        st.markdown(st.session_state["spaced_result"])
+        st.markdown("</div>", unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE: STUDY PLAN
+# ═══════════════════════════════════════════════════════════════
+elif st.session_state.page == "STUDY PLAN":
+    st.markdown(f"""<div class='storm-card storm-card-lime'>
+        <div class='card-badge'>📅 STUDY_PLANNER</div>
+        <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:24px;text-transform:uppercase;color:{WHITE};'>Personalized Study Plan</div>
+    </div>""", unsafe_allow_html=True)
+    if not require_notes(): st.stop()
+    col1, col2, col3 = st.columns(3)
+    with col1: study_days  = st.number_input("DAYS AVAILABLE", 1, 30, 7)
+    with col2: daily_hours = st.number_input("HOURS PER DAY",  1, 12, 3)
+    with col3: goal        = st.selectbox("GOAL", ["Exam Prep","Deep Learning","Quick Revision","Assignment Prep"])
+    if st.button("📅 CREATE STUDY PLAN", use_container_width=True):
+        with st.spinner("Building plan..."):
+            result = ollama_generate(
+                f"Create a {study_days}-day study plan, {daily_hours} hrs/day, goal: {goal}.\n"
+                f"Format: **DAY X:**\n- Morning: [activity]\n- Afternoon: [activity]\n- Evening: [activity]\n---\n\n"
+                f"Notes:\n{st.session_state.notes_text[:3000]}", st.session_state.theme_model
+            )
+        st.session_state["plan_result"] = result
+        add_xp(50, "Created study plan")
+    if "plan_result" in st.session_state:
+        for i, day in enumerate(st.session_state["plan_result"].split("---")):
+            if day.strip():
+                with st.expander(f"📅 DAY {i+1}", expanded=(i == 0)):
+                    st.markdown(day.strip())
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE: POMODORO
+# ═══════════════════════════════════════════════════════════════
+elif st.session_state.page == "POMODORO":
+    st.markdown(f"""<div class='storm-card storm-card-lime'>
+        <div class='card-badge'>🍅 FOCUS_ENGINE</div>
+        <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:24px;text-transform:uppercase;color:{WHITE};'>Pomodoro Timer</div>
+        <p style='color:{MUTED};'>Focus is a weapon. Wield it.</p>
+    </div>""", unsafe_allow_html=True)
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        work_min  = st.slider("WORK MINUTES",  5, 60, 25)
+        break_min = st.slider("BREAK MINUTES", 1, 30, 5)
+        mode  = st.session_state.pomodoro_mode
+        color = LIME if mode == "Work" else PINK
+
+        if st.session_state.pomodoro_running and st.session_state.pomodoro_start:
+            elapsed   = time.time() - st.session_state.pomodoro_start
+            total     = (work_min if mode == "Work" else break_min) * 60
+            remaining = max(0, total - int(elapsed))
+            if remaining == 0:
+                st.session_state.pomodoro_running = False
+                if mode == "Work":
+                    st.session_state.pomodoro_sessions += 1
+                    st.session_state.bounties["pomodoro"] = True
+                    add_xp(50, "Completed Pomodoro!")
+                    st.session_state.pomodoro_mode = "Break"
+                else:
+                    st.session_state.pomodoro_mode = "Work"
+                st.rerun()
+        else:
+            total     = (work_min if mode == "Work" else break_min) * 60
+            remaining = total
+
+        mins, secs = divmod(remaining, 60)
+        progress   = 1.0 - (remaining / total) if total > 0 else 0
+
+        st.markdown(f"""
+        <div style='border:2px solid {WHITE};padding:2rem;background:#000;
+                    box-shadow:8px 8px 0 0 {color};text-align:center;margin-bottom:1rem;'>
+            <div style='font-size:11px;font-family:Space Grotesk,sans-serif;font-weight:700;
+                        text-transform:uppercase;color:{color};letter-spacing:0.1em;margin-bottom:8px;'>
+                {"🔥 DEEP WORK" if mode == "Work" else "☕ RECHARGE"} MODE
+            </div>
+            <div class='timer-display' style='color:{color};'>{mins:02d}:{secs:02d}</div>
+            <div style='font-size:11px;color:#444;font-family:Space Grotesk,sans-serif;font-weight:700;text-transform:uppercase;margin-top:8px;'>
+                SESSION {st.session_state.pomodoro_sessions + 1}
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        st.progress(progress)
+
+        bc1, bc2, bc3 = st.columns(3)
+        with bc1:
+            if not st.session_state.pomodoro_running:
+                if st.button("▶️ START", use_container_width=True):
+                    st.session_state.pomodoro_running = True
+                    st.session_state.pomodoro_start   = time.time()
+                    st.rerun()
+            else:
+                if st.button("⏸️ PAUSE", use_container_width=True):
+                    st.session_state.pomodoro_running = False
+                    st.rerun()
+        with bc2:
+            if st.button("🔄 RESET", use_container_width=True):
+                st.session_state.pomodoro_running = False
+                st.session_state.pomodoro_start   = None
+                st.rerun()
+        with bc3:
+            if st.button("⏭️ SKIP", use_container_width=True):
+                st.session_state.pomodoro_running = False
+                st.session_state.pomodoro_mode    = "Break" if mode == "Work" else "Work"
+                st.rerun()
+
+        if st.session_state.pomodoro_running:
+            time.sleep(1)
+            st.rerun()
+
+    with col2:
+        st.markdown(f"""
+        <div class='storm-card storm-card-pink'>
+            <div class='card-badge card-badge-pink'>SESSION STATS</div>
+            <div style='font-size:40px;font-weight:900;color:{PINK};font-family:Space Grotesk,sans-serif;'>{st.session_state.pomodoro_sessions} 🍅</div>
+            <div style='font-size:10px;color:#555;text-transform:uppercase;margin-top:12px;'>FOCUS TIME</div>
+            <div style='font-size:24px;font-weight:900;color:{LIME};font-family:Space Grotesk,sans-serif;'>{st.session_state.pomodoro_sessions * work_min}m</div>
+            <div style='font-size:10px;color:#555;text-transform:uppercase;margin-top:12px;'>XP EARNED</div>
+            <div style='font-size:24px;font-weight:900;color:{LIME};font-family:Space Grotesk,sans-serif;'>{st.session_state.pomodoro_sessions * 50}</div>
+        </div>
+        """, unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE: MY NOTES
+# ═══════════════════════════════════════════════════════════════
+elif st.session_state.page == "MY NOTES":
+    st.markdown(f"""<div class='storm-card storm-card-white'>
+        <div class='card-badge'>📒 NOTES_VAULT</div>
+        <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:24px;text-transform:uppercase;color:{WHITE};'>My Notes Archive</div>
+    </div>""", unsafe_allow_html=True)
+
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        new_title   = st.text_input("NOTE TITLE", placeholder="e.g. Chapter 5 - Photosynthesis")
+        new_content = st.text_area("NOTE CONTENT", height=150, placeholder="Write your notes here...")
+        new_tags    = st.text_input("TAGS (comma-separated)", placeholder="biology, chapter5, exam")
+    with col2:
+        st.markdown("<div style='height:32px'></div>", unsafe_allow_html=True)
+        if st.button("💾 SAVE NOTE", use_container_width=True):
+            if new_title and new_content:
+                st.session_state.my_notes.append({
+                    "id":      len(st.session_state.my_notes),
+                    "title":   new_title.upper(),
+                    "content": new_content,
+                    "tags":    [t.strip() for t in new_tags.split(",") if t.strip()],
+                    "created": datetime.now().strftime("%b %d, %Y %H:%M"),
+                    "xp":      20,
+                })
+                add_xp(20, "Saved a note")
+                st.success("✅ Note saved!")
+                st.rerun()
+            else:
+                st.error("Enter title and content!")
+
+    st.markdown("---")
+    if st.session_state.my_notes:
+        colors_cycle = ["lime","pink","cyan","white"]
+        grid_cols = st.columns(3)
+        for i, note in enumerate(reversed(st.session_state.my_notes)):
+            with grid_cols[i % 3]:
+                c = colors_cycle[i % len(colors_cycle)]
+                tags_html = "".join(
+                    f'<span style="background:#000;border:1px solid {DARK};padding:2px 6px;font-size:10px;font-family:Space Grotesk,sans-serif;font-weight:700;color:#555;text-transform:uppercase;">{tag}</span>'
+                    for tag in note["tags"]
+                )
+                st.markdown(f"""
+                <div class='storm-card storm-card-{c}'>
+                    <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:14px;color:{WHITE};text-transform:uppercase;'>{note["title"]}</div>
+                    <div style='font-size:11px;color:#555;margin-top:4px;'>{note["created"]}</div>
+                    <p style='font-size:13px;color:{MUTED};margin-top:8px;line-height:1.5;'>{note["content"][:100]}...</p>
+                    <div style='margin-top:8px;display:flex;flex-wrap:wrap;gap:4px;'>{tags_html}</div>
+                </div>
+                """, unsafe_allow_html=True)
+    else:
+        st.markdown(f"""
+        <div style='text-align:center;padding:3rem;border:2px dashed {DARK};color:{DARK};font-family:Space Grotesk,sans-serif;font-weight:700;font-size:14px;text-transform:uppercase;'>
+            📭 No notes saved yet. Create your first note above!
+        </div>
+        """, unsafe_allow_html=True)
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE: ASK AI
+# ═══════════════════════════════════════════════════════════════
+elif st.session_state.page == "ASK AI":
+    st.markdown(f"""<div class='storm-card storm-card-cyan'>
+        <div class='card-badge card-badge-cyan'>🤖 AI_TUTOR_MODE</div>
+        <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:24px;text-transform:uppercase;color:{WHITE};'>Ask Your AI Tutor</div>
+    </div>""", unsafe_allow_html=True)
+
+    for msg in st.session_state.chat_history:
+        role_color = LIME if msg["role"] == "user" else CYAN
+        role_label = "YOU" if msg["role"] == "user" else "🤖 AI TUTOR"
+        align      = "flex-end" if msg["role"] == "user" else "flex-start"
+        bg         = SURF if msg["role"] == "user" else BG
+        border_c   = LIME if msg["role"] == "user" else CYAN
+        st.markdown(f"""
+        <div style='display:flex;justify-content:{align};margin-bottom:12px;'>
+            <div style='max-width:80%;background:{bg};border:2px solid {border_c};padding:12px 16px;'>
+                <div style='font-family:Space Grotesk,sans-serif;font-size:10px;font-weight:900;color:{role_color};text-transform:uppercase;letter-spacing:0.1em;margin-bottom:6px;'>{role_label}</div>
+                <div style='font-family:Inter,sans-serif;font-size:14px;color:{TEXT};line-height:1.6;white-space:pre-wrap;'>{msg["content"]}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+
+    user_input = st.chat_input("Ask your AI tutor anything about your notes...")
+    if user_input:
+        st.session_state.chat_history.append({"role": "user", "content": user_input})
+        context = f"\n\nContext from notes:\n{st.session_state.notes_text[:3000]}" if st.session_state.notes_text else ""
+        with st.spinner("AI thinking..."):
+            response = ollama_generate(
+                f"{user_input}{context}", st.session_state.theme_model,
+                system="You are STORM_AI, an enthusiastic AI tutor for Gen Z students. Be direct, use examples, occasionally use emojis."
+            )
+        st.session_state.chat_history.append({"role": "assistant", "content": response})
+        add_xp(10, "Asked AI tutor")
+        st.rerun()
+
+    if st.session_state.chat_history:
+        if st.button("🗑️ CLEAR CHAT"):
+            st.session_state.chat_history = []
+            st.rerun()
+
+# ═══════════════════════════════════════════════════════════════
+# PAGE: ANALYTICS
+# ═══════════════════════════════════════════════════════════════
+elif st.session_state.page == "ANALYTICS":
+    st.markdown(f"""<div class='storm-card storm-card-cyan'>
+        <div class='card-badge card-badge-cyan'>📊 BRAIN_ANALYTICS</div>
+        <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:24px;text-transform:uppercase;color:{WHITE};'>Your Performance Dashboard</div>
+    </div>""", unsafe_allow_html=True)
+
+    mcols = st.columns(5)
+    metrics = [
+        ("TOTAL XP",      f"{st.session_state.xp:,}",                     LIME),
+        ("🍅 POMODOROS",  str(st.session_state.pomodoro_sessions),         PINK),
+        ("🃏 FLASHCARDS", str(len(st.session_state.flashcards)),           CYAN),
+        ("📝 NOTES",      str(len(st.session_state.my_notes)),             WHITE),
+        ("✍️ HW NOTES",   str(len(st.session_state.handwritten_notes)),    TEXT),
+    ]
+    for i, (label, value, color) in enumerate(metrics):
+        with mcols[i]:
+            st.markdown(f"""
+            <div style='background:{BG};border:2px solid {color};padding:16px;box-shadow:4px 4px 0 0 {color};text-align:center;'>
+                <div style='font-family:Space Grotesk,sans-serif;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:#555;'>{label}</div>
+                <div style='font-family:Space Grotesk,sans-serif;font-size:36px;font-weight:900;color:{color};margin-top:4px;'>{value}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    st.markdown("---")
+    st.markdown(f"""<div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:16px;text-transform:uppercase;color:{WHITE};margin-bottom:12px;'>🏆 ACHIEVEMENTS</div>""", unsafe_allow_html=True)
+    achievements = [
+        ("⚡", "FIRST STRIKE",   "Uploaded first notes",    st.session_state.notes_text != ""),
+        ("🍅", "TOMATO WARRIOR", "Completed a Pomodoro",    st.session_state.pomodoro_sessions > 0),
+        ("🃏", "CARD SHARK",     "Generated flashcards",    len(st.session_state.flashcards) > 0),
+        ("✍️", "SCRIBBLER",      "Saved handwritten note",  len(st.session_state.handwritten_notes) > 0),
+        ("🔥", "HEAT SEEKER",    "14-day streak",           st.session_state.streak >= 14),
+        ("🎮", "GAMER",          "Played 5+ rapid fire",    st.session_state.rf_total >= 5),
+    ]
+    a_cols = st.columns(3)
+    for i, (icon, title, desc, unlocked) in enumerate(achievements):
+        with a_cols[i % 3]:
+            border  = LIME if unlocked else DARK
+            opacity = "1" if unlocked else "0.35"
+            check   = f'<span style="color:{LIME};font-size:16px;">✓</span>' if unlocked else ""
+            st.markdown(f"""
+            <div style='background:{BG};border:2px solid {border};padding:10px 14px;margin-bottom:6px;display:flex;align-items:center;gap:12px;opacity:{opacity};'>
+                <span style='font-size:24px;'>{icon}</span>
+                <div style='flex:1;'>
+                    <div style='font-family:Space Grotesk,sans-serif;font-weight:900;font-size:12px;color:{WHITE};text-transform:uppercase;'>{title}</div>
+                    <div style='font-size:11px;color:#555;'>{desc}</div>
+                </div>
+                {check}
+            </div>
+            """, unsafe_allow_html=True)
+
+# ─── FOOTER ───────────────────────────────────────────────────
+st.markdown(f"""
+<div style='border-top:2px solid {DARK};padding:16px;text-align:center;margin-top:2rem;'>
+    <span style='font-family:Space Grotesk,sans-serif;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.1em;color:{DARK};'>
+        ⚡ BRAINLYTICS — Built for Gen Z Learners · v2.2 FIXED NAV
+    </span>
+</div>
+""", unsafe_allow_html=True)
